@@ -174,6 +174,9 @@ OVERLAY = {
         "by running the complete default gather, so it is a superset of every "
         "other plugin.",
         "superset": True,
+        # Not derivable: it honours --since only via the /usr/bin/gather run it
+        # starts with, not in its own extra OVN collection.
+        "since": "pod-logs",
     },
     "network_logs_basics": {
         "description": "Core networking: cluster network operator, "
@@ -363,6 +366,56 @@ def parse_gather(path):
     return core, invocations
 
 
+def _script_text(scripts_dir, name):
+    """Script source with any sibling files it sources inlined."""
+    path = os.path.join(scripts_dir, name)
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+    for sourced in re.findall(r"^\s*(?:\.|source)\s+[\"']?([\w./$(){}-]+)[\"']?\s*$",
+                              text, re.M):
+        sibling = os.path.basename(sourced.strip("\"'"))
+        if sibling in ("common.sh", name) or "$" in sibling:
+            continue
+        sibling_path = os.path.join(scripts_dir, sibling)
+        if os.path.exists(sibling_path):
+            with open(sibling_path, encoding="utf-8", errors="replace") as fh:
+                text += "\n" + fh.read()
+    return text
+
+
+def classify_since(scripts_dir, name):
+    """How far --since / --since-time actually reach into this plugin.
+
+    'pod-logs'  passes ${log_collection_args} to oc adm inspect, so pod logs
+                are trimmed.
+    'journal'   queries host journals with oc adm node-logs and no --path, so
+                the journal query is trimmed.
+    'both'      does both of the above.
+    'none'      neither -- including plugins that pass the since arguments to
+                'oc adm node-logs --path=FILE', where oc silently drops them:
+                node_logs.go only attaches the 'since' parameter when the path
+                is 'journal' (the flag help says "Only applies to node service
+                logs").
+    """
+    text = _script_text(scripts_dir, name)
+    pod_logs = "${log_collection_args}" in text
+
+    journal = False
+    for line in text.splitlines():
+        if "node-logs" not in line or line.lstrip().startswith("#"):
+            continue
+        if "--path" not in line:
+            journal = True
+
+    if pod_logs and journal:
+        return "both"
+    if pod_logs:
+        return "pod-logs"
+    if journal:
+        return "journal"
+    return "none"
+
+
 def discover_scripts(scripts_dir):
     """All runnable gather_* scripts in collection-scripts/."""
     names = []
@@ -399,6 +452,7 @@ def build_catalog(src, ref, commit):
             "phase": "parallel" if (inv is None or inv["parallel"]) else "post",
             "order": order if inv is None else list(invoked).index(name),
             "description": overlay.pop("description", ""),
+            "since": classify_since(scripts_dir, f"gather_{name}"),
         }
         order += 1
 
@@ -433,6 +487,7 @@ def build_catalog(src, ref, commit):
         },
         "core": {
             "description": CORE_DESCRIPTION,
+            "since": "pod-logs",
             "named_resources": core["named_resources"],
             "group_resources": core["group_resources"],
             "all_ns_resources": core["all_ns_resources"],

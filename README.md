@@ -107,15 +107,79 @@ $ must-gather-sos --since-time 2026-10-16T09:00:00Z
 $ must-gather-sos --reduce-logs skip_rotated_logs,compress_logs
 ```
 
+### What `--since` can and cannot reach
+
+**`--since` is not universal, and that is an upstream limitation, not a
+wrapper one.** It reaches collection in exactly two ways:
+
+| Route | Effect | Plugins |
+| ----- | ------ | ------- |
+| `oc adm inspect --since` | trims **pod logs** | `core` and 12 others |
+| `oc adm node-logs --since` on a **journal** query | trims **host service logs** | `service_logs`, `ppc` |
+
+It reaches nothing else. In particular, `oc adm node-logs` only attaches the
+`since` parameter when the path is `journal`
+([`pkg/cli/admin/node/logs.go`](https://github.com/openshift/oc/blob/master/pkg/cli/admin/node/logs.go)):
+
+```go
+if o.Path == "journal" {
+        ...
+        if len(o.Since) > 0 {
+                req.Param("since", o.Since)
+        }
+```
+
+The flag's own help says so: *"Only applies to node service logs."* So plugins
+that fetch **files** with `oc adm node-logs --path=FILE` silently get whole
+files, no matter what you pass:
+
+- `audit_logs` — every rotated `audit-*.log` on every master
+- `kas_startup_termination_logs`
+- `windows_node_logs`
+
+Plugins that `oc cp` files out of pods (`insights`, `haproxy_config`,
+`core_dumps`, …) or query Prometheus (`monitoring`, `metrics`) have no time
+window either.
+
+`must-gather-sos` will not let that surprise you — it says so before it runs:
+
+```console
+$ must-gather-sos -o audit_logs -k audit_logs.force=on --since 30m
+  warning: --since does not affect audit_logs; it collects whole files or
+           point-in-time state. Run with --list-plugins for the detail.
+```
+
+`--list-plugins` annotates every plugin with what `--since` does to it, and
+`--list-plugins --format json` exposes it as a `since` field
+(`pod-logs` / `journal` / `both` / `none`).
+
+To actually bound an audit-log collection, bound the *plugin set* and use
+`--reduce-logs` instead:
+
+```console
+$ must-gather-sos -o audit_logs -k audit_logs.force=on --reduce-logs compress_logs
+```
+
 ## How it works
 
 `must-gather-sos` builds a bash program and hands it to
-`oc adm must-gather` after `--`. See exactly what it will do with
-`--dry-run`, which needs no cluster:
+`oc adm must-gather` after `--`. Three flags show you exactly what it will do,
+none of which need a cluster:
 
 ```console
-$ must-gather-sos -o core,etcd --since 2h --dry-run
+$ must-gather-sos -o core,etcd --since 2h --dry-run        # summary + script + command
+$ must-gather-sos -o core,etcd --since 2h --print-command  # just the command, paste-ready
+$ must-gather-sos -o core,etcd --since 2h --print-script   # just the in-pod script
 ```
+
+`--print-command` emits a single line you can copy, tweak and run yourself:
+
+```console
+$ must-gather-sos -o etcd --since 30m --print-command
+oc adm must-gather --dest-dir=must-gather.local.123 --since=30m -- "echo 'IyEvYmlu...' | base64 -d >/tmp/must-gather-sos.sh && bash /tmp/must-gather-sos.sh"
+```
+
+Pipe it through `--print-script` to read what that base64 actually is.
 
 ### The quoting problem
 

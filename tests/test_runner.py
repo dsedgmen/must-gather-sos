@@ -9,6 +9,7 @@ import argparse
 import base64
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -146,3 +147,24 @@ class TestHelpers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestShellQuoting(unittest.TestCase):
+    """--print-command output must be paste-able and parse back identically."""
+
+    def test_payload_is_double_quoted_for_readability(self):
+        quoted = runner.shell_quote("echo 'AAAA' | base64 -d >/tmp/x && bash /tmp/x")
+        self.assertTrue(quoted.startswith('"') and quoted.endswith('"'))
+        self.assertNotIn('"\'"', quoted)
+
+    def test_falls_back_to_shlex_when_double_quotes_are_unsafe(self):
+        for hostile in ("a$b", "a`b`", 'a"b', "a\\b"):
+            with self.subTest(arg=hostile):
+                self.assertEqual(shlex.split(runner.shell_quote(hostile)), [hostile])
+
+    def test_printed_command_round_trips_through_the_shell(self):
+        catalog = Catalog.load()
+        selection = build_selection(catalog, only="core,etcd")
+        payload = runner.encode_payload(generate(catalog, selection))
+        argv = runner.build_oc_args(make_args(since="2h"), payload, oc="oc")
+        self.assertEqual(shlex.split(runner.quote_command(argv)), argv)

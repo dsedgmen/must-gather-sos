@@ -13,7 +13,8 @@ from . import PROG, UserError, __version__
 from . import archive as archive_mod
 from . import manifest as manifest_mod
 from . import runner, script
-from .catalog import Catalog, build_selection, split_list
+from .catalog import (SINCE_HELP, SINCE_LABEL, Catalog, build_selection,
+                      split_list)
 
 _DURATION = re.compile(r"^\d+(\.\d+)?(ns|us|ms|s|m|h)$")
 _RFC3339 = re.compile(
@@ -106,6 +107,11 @@ def build_parser():
     behaviour = parser.add_argument_group("behaviour")
     behaviour.add_argument("--dry-run", action="store_true",
                            help="print the generated script and oc command, run nothing")
+    behaviour.add_argument("--print-command", action="store_true",
+                           help="print only the full oc command, shell-quoted "
+                                "and ready to paste, and exit")
+    behaviour.add_argument("--print-script", action="store_true",
+                           help="print only the generated in-pod script and exit")
     behaviour.add_argument("--batch", action="store_true",
                            help="do not prompt for confirmation")
     behaviour.add_argument("-q", "--quiet", action="store_true")
@@ -163,6 +169,7 @@ def list_plugins(catalog, as_json):
                     "phase": plugin.phase,
                     "description": plugin.description,
                     "superset": plugin.superset,
+                    "since": plugin.since,
                     "options": plugin.options,
                 }
                 for name, plugin in sorted(catalog.plugins.items())
@@ -200,6 +207,7 @@ def list_plugins(catalog, as_json):
                 text = "[superset] " + text
             if plugin.options:
                 text += f"  Options: {', '.join(sorted(plugin.options))}."
+            text += f"  --since: {SINCE_LABEL[plugin.since]}."
             entry(name, text)
 
     # Alphabetical here -- this list is for picking plugins, not for reading
@@ -214,6 +222,10 @@ def list_plugins(catalog, as_json):
         for name, plugin in sorted(catalog.plugins.items())
         for opt, spec in sorted(plugin.options.items())
     ]
+    print("\nabout --since:")
+    for line in textwrap.wrap(SINCE_HELP, width=max(width - 2, 40)):
+        print(f"  {line}")
+
     if options:
         print("\nplugin options (-k plugin.option=value):")
         for key, spec in options:
@@ -245,7 +257,19 @@ def summarise(catalog, selection, args, out=None):
     if args.since_time:
         print(f"  since-time: {args.since_time}", file=out)
     print(f"  output: {args.dest_dir}", file=out)
-    for warning in selection.warnings:
+
+    warnings = list(selection.warnings)
+    if args.since or args.since_time:
+        ignored = [n for n in selection.names
+                   if not catalog.plugins[n].honours_since]
+        if ignored:
+            warnings.append(
+                f"--since does not affect {', '.join(ignored)}; "
+                f"{'they collect' if len(ignored) > 1 else 'it collects'} "
+                "whole files or point-in-time state. Run with "
+                "--list-plugins for the detail."
+            )
+    for warning in warnings:
         print(f"  warning: {warning}", file=out)
 
 
@@ -311,14 +335,25 @@ def _run(args):
     text = script.generate(catalog, selection, reduce_logs=reduce_logs)
     payload = runner.encode_payload(text)
 
+    if args.print_script:
+        print(text, end="")
+        return 0
+
+    if args.print_command:
+        # Shell-quoted so it can be pasted and run verbatim.
+        oc_argv = runner.build_oc_args(args, payload, oc=args.oc)
+        print(runner.quote_command(oc_argv))
+        return 0
+
     if args.dry_run:
         oc_argv = runner.build_oc_args(args, payload, oc=args.oc)
         summarise(catalog, selection, args, out=sys.stdout)
         print("\n--- in-pod script ---")
         print(text, end="")
         print("\n--- oc command ---")
-        print(" ".join(oc_argv[:-1]))
+        print(runner.quote_command(oc_argv[:-1]))
         print(f"  {oc_argv[-1][:72]}...  ({len(oc_argv[-1])} chars, one argv element)")
+        print("\n(use --print-command for the full, paste-ready command)")
         return 0
 
     oc = runner.which_oc(args.oc)
@@ -359,12 +394,22 @@ def _run(args):
 
 
 def _report_plugin_failures(doc, quiet=False):
-    failures = [p for p in doc["results"]["plugins"] if p["rc"] != 0]
-    if failures and not quiet:
-        print("plugins that reported a non-zero exit status:", file=sys.stderr)
-        for item in failures:
-            print(f"  {item['name']}: rc={item['rc']} after {item['seconds']}s",
-                  file=sys.stderr)
+    results = doc["results"]["plugins"]
+    failures = [p for p in results if p["rc"] != 0]
+    if not failures or quiet:
+        return
+    # A non-zero rc here is routine, not a failed collection: oc adm inspect
+    # exits 1 when any optional resource is absent, and most gather_* scripts
+    # no-op loudly when their operator is not installed. Upstream's gather
+    # discards these statuses entirely; we surface them, so say what they mean.
+    print(f"\n{len(failures)} of {len(results)} collection steps exited "
+          "non-zero. This is common and usually harmless -- oc adm inspect "
+          "exits 1 when an optional resource is absent. Data already "
+          "collected is still written.", file=sys.stderr)
+    for item in failures:
+        print(f"  {item['name']}: rc={item['rc']} after {item['seconds']}s",
+              file=sys.stderr)
+    print("  see gather.logs in the output for the reason", file=sys.stderr)
 
 
 if __name__ == "__main__":  # pragma: no cover

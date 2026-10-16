@@ -79,7 +79,8 @@ value verbatim, so a value containing commas or spaces stays one value.
 Only collect logs newer than e.g. \fB5m\fR or \fB2h\fR. Passed to
 .BR oc ,
 which sets \fBMUST_GATHER_SINCE\fR in the pod; the generated script sources
-\fB/usr/bin/common.sh\fR so every plugin honours it.
+\fB/usr/bin/common.sh\fR so plugins that support a time window honour it.
+See \fBTHE REACH OF \-\-SINCE\fR below: it is not universal.
 .TP
 .B \-\-since\-time " \fIRFC3339\fR"
 Only collect logs after a specific time, e.g. \fB2026\-10\-16T09:00:00Z\fR.
@@ -122,6 +123,13 @@ image's plugin layout.
 Print the generated in\-pod script and the \fBoc\fR command, and run nothing.
 Needs no cluster.
 .TP
+.B \-\-print\-command
+Print only the full \fBoc\fR command, shell\-quoted and ready to paste, then
+exit. Needs no cluster.
+.TP
+.B \-\-print\-script
+Print only the generated in\-pod script, then exit. Needs no cluster.
+.TP
 .B \-\-batch
 Do not prompt for confirmation.
 .TP
@@ -130,6 +138,31 @@ Use an alternative plugin catalog instead of the vendored one.
 .TP
 .B \-\-oc " \fIPATH\fR"
 Path to the \fBoc\fR binary.
+.SH THE REACH OF \-\-SINCE
+\fB\-\-since\fR and \fB\-\-since\-time\fR reach collection in exactly two
+ways, and this is an upstream limitation rather than one this tool adds.
+.TP
+.B oc adm inspect \-\-since
+Trims \fBpod logs\fR. Applies to \fBcore\fR and twelve other plugins.
+.TP
+.B oc adm node-logs \-\-since " on a journal query"
+Trims \fBhost service logs\fR. Applies to \fBservice_logs\fR and \fBppc\fR.
+.PP
+Nothing else is affected.
+.B oc
+attaches the since parameter only when the node\-logs path is \fBjournal\fR
+(see \fIpkg/cli/admin/node/logs.go\fR in openshift/oc; the flag help reads
+"Only applies to node service logs"). Plugins that fetch files with
+.B oc adm node-logs \-\-path=\fIFILE\fR
+therefore always return whole files, however small a window you ask for:
+\fBaudit_logs\fR, \fBkas_startup_termination_logs\fR and
+\fBwindows_node_logs\fR. Plugins that copy files out of pods, or query
+Prometheus, have no time window either.
+.PP
+.B must-gather-sos
+warns before it runs when a selected plugin cannot honour the window, and
+\fB\-\-list\-plugins\fR annotates every plugin with what \fB\-\-since\fR
+does to it.
 .SH EXAMPLES
 Everything the default gather does, as a baseline:
 .PP

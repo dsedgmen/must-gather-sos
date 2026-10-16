@@ -30,6 +30,7 @@ import base64
 import os
 import random
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -152,6 +153,22 @@ def execute(argv, log=None):
 
 def _display(arg):
     return arg if re.match(r"^[\w@%+=:,./-]+$", arg) else repr(arg)
+
+
+def shell_quote(arg):
+    """Quote for a copy-pasteable command line, readably.
+
+    The payload contains single quotes (around the base64) but nothing the
+    shell expands inside double quotes, so double-quoting it stays correct and
+    avoids shlex.quote's '"'"' noise. Anything else falls back to shlex.
+    """
+    if "'" in arg and not any(ch in arg for ch in '"$`\\'):
+        return f'"{arg}"'
+    return shlex.quote(arg)
+
+
+def quote_command(argv):
+    return " ".join(shell_quote(arg) for arg in argv)
 
 
 def resolve_output_dir(dest_dir):

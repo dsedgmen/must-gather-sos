@@ -17,6 +17,28 @@ from . import UserError
 
 CORE = "core"
 
+#: Why --since is not universal, in one paragraph, used by --list-plugins and
+#: by the warning printed when a selection contains plugins that ignore it.
+SINCE_HELP = (
+    "--since / --since-time reach a plugin in two ways: as --since on "
+    "'oc adm inspect' (which trims pod logs), and as --since on "
+    "'oc adm node-logs' journal queries (which trims host service logs). "
+    "They do NOT reach file-based collection: oc attaches the since parameter "
+    "only when the node-logs path is 'journal' (node_logs.go), so plugins that "
+    "fetch files with 'oc adm node-logs --path=FILE' -- audit_logs, "
+    "kas_startup_termination_logs, windows_node_logs -- always return whole "
+    "files. Plugins that copy files out of pods or query Prometheus have no "
+    "time window either. This is upstream behaviour, identical to a plain "
+    "'oc adm must-gather --since'."
+)
+
+SINCE_LABEL = {
+    "both": "pod logs + host journals",
+    "pod-logs": "pod logs only",
+    "journal": "host journals only",
+    "none": "not supported",
+}
+
 _TRUE = {"on", "true", "yes", "1", "enable", "enabled"}
 _FALSE = {"off", "false", "no", "0", "disable", "disabled"}
 
@@ -39,6 +61,13 @@ class Plugin:
         self.options = spec.get("options", {})
         self.superset = bool(spec.get("superset", False))
         self.requires_option = bool(spec.get("requires_option", False))
+        # How far --since actually reaches: pod-logs | journal | both | none.
+        # See SINCE_HELP for why 'none' happens.
+        self.since = spec.get("since", "none")
+
+    @property
+    def honours_since(self):
+        return self.since != "none"
 
     @property
     def is_core(self):
@@ -62,6 +91,7 @@ class Catalog:
             "phase": "core",
             "order": -1,
             "description": doc["core"].get("description", ""),
+            "since": doc["core"].get("since", "pod-logs"),
         })}
         for name, spec in doc["plugins"].items():
             if name in self.plugins:

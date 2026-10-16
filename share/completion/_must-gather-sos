@@ -45,6 +45,8 @@ _arguments -s -S \
 	'--volume-percentage[max volume usage percentage]:percent:' \
 	'--source-dir[directory in the pod to copy from]:directory:' \
 	'--dry-run[print the generated script and oc command, run nothing]' \
+	'--print-command[print only the full oc command, paste-ready]' \
+	'--print-script[print only the generated in-pod script]' \
 	'--batch[do not prompt for confirmation]' \
 	'(-q --quiet)'{-q,--quiet}'[quieter output]' \
 	'(-v --verbose)'{-v,--verbose}'[more output]' \

@@ -119,3 +119,32 @@ class TestCatalogLoading(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSinceClassification(unittest.TestCase):
+    def setUp(self):
+        self.catalog = Catalog.load()
+
+    def test_every_plugin_is_classified(self):
+        for name, plugin in self.catalog.plugins.items():
+            self.assertIn(plugin.since,
+                          {"both", "pod-logs", "journal", "none"}, name)
+
+    def test_file_fetching_plugins_cannot_honour_since(self):
+        # oc only attaches the since parameter when the node-logs path is
+        # 'journal' (openshift/oc pkg/cli/admin/node/logs.go), so these three,
+        # which fetch files with --path=, always return whole files.
+        for name in ("audit_logs", "kas_startup_termination_logs",
+                     "windows_node_logs"):
+            self.assertEqual(self.catalog.get(name).since, "none", name)
+            self.assertFalse(self.catalog.get(name).honours_since, name)
+
+    def test_inspect_based_plugins_honour_since(self):
+        for name in ("core", "sriov", "olm", "network_logs_basics"):
+            self.assertEqual(self.catalog.get(name).since, "pod-logs", name)
+
+    def test_service_logs_honours_since_via_journal(self):
+        self.assertEqual(self.catalog.get("service_logs").since, "journal")
+
+    def test_ppc_honours_since_both_ways(self):
+        self.assertEqual(self.catalog.get("ppc").since, "both")

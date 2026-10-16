@@ -186,7 +186,8 @@ class TestFullRun(unittest.TestCase):
 
     def test_plugin_failures_are_surfaced(self):
         _, _, err, _ = self.run_collect()
-        self.assertIn("non-zero exit status", err)
+        self.assertIn("collection steps exited non-zero", err)
+        self.assertIn("usually harmless", err)
         self.assertIn("etcd: rc=1", err)
 
     def test_case_id_recorded(self):
@@ -245,3 +246,61 @@ class TestArchiveHelpers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPrintModes(unittest.TestCase):
+    def test_print_command_emits_one_pasteable_line(self):
+        import shlex
+        code, out, err = run_cli("-o", "core,etcd", "--since", "2h",
+                                 "--dest-dir", "/tmp/x", "--print-command")
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertEqual(len(out.strip().splitlines()), 1)
+        argv = shlex.split(out)
+        self.assertEqual(argv[:3], ["oc", "adm", "must-gather"])
+        self.assertIn("--since=2h", argv)
+        self.assertEqual(argv.index("--"), len(argv) - 2)
+
+    def test_print_script_emits_only_the_script(self):
+        code, out, err = run_cli("-o", "etcd", "--print-script")
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertTrue(out.startswith("#!/bin/bash"))
+        self.assertIn("/usr/bin/gather_etcd", out)
+        self.assertNotIn("oc adm must-gather", out)
+
+    def test_print_modes_need_no_cluster(self):
+        with mock.patch("must_gather_sos.runner.check_cluster") as check:
+            run_cli("-o", "core", "--print-command")
+            run_cli("-o", "core", "--print-script")
+            check.assert_not_called()
+
+
+class TestSinceWarning(unittest.TestCase):
+    def test_warns_when_a_selected_plugin_ignores_since(self):
+        _, out, _ = run_cli("-o", "audit_logs", "-k", "audit_logs.force=on",
+                            "--since", "30m", "--dry-run")
+        self.assertIn("--since does not affect audit_logs", out)
+
+    def test_no_warning_when_every_plugin_honours_since(self):
+        _, out, _ = run_cli("-o", "core,sriov", "--since", "30m", "--dry-run")
+        self.assertNotIn("--since does not affect", out)
+
+    def test_no_warning_without_since(self):
+        _, out, _ = run_cli("-o", "audit_logs", "-k", "audit_logs.force=on",
+                            "--dry-run")
+        self.assertNotIn("--since does not affect", out)
+
+    def test_listing_states_since_support_per_plugin(self):
+        _, out, _ = run_cli("--list-plugins")
+        self.assertIn("--since: not supported", out)
+        self.assertIn("--since: pod logs only", out)
+        self.assertIn("about --since:", out)
+
+    def test_json_listing_carries_since_support(self):
+        _, out, _ = run_cli("--list-plugins", "--format", "json")
+        doc = json.loads(out)
+        self.assertEqual(doc["plugins"]["audit_logs"]["since"], "none")
+        self.assertEqual(doc["plugins"]["core"]["since"], "pod-logs")
+        self.assertEqual(doc["plugins"]["service_logs"]["since"], "journal")
+        self.assertEqual(doc["plugins"]["ppc"]["since"], "both")
