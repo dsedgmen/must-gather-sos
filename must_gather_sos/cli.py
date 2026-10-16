@@ -260,14 +260,22 @@ def summarise(catalog, selection, args, out=None):
 
     warnings = list(selection.warnings)
     if args.since or args.since_time:
-        ignored = [n for n in selection.names
-                   if not catalog.plugins[n].honours_since]
-        if ignored:
+        passed = [n for n in selection.names
+                  if catalog.plugins[n].since == "passed-through"]
+        inert = [n for n in selection.names
+                 if catalog.plugins[n].since == "none"]
+        if passed:
             warnings.append(
-                f"--since does not affect {', '.join(ignored)}; "
-                f"{'they collect' if len(ignored) > 1 else 'it collects'} "
-                "whole files or point-in-time state. Run with "
-                "--list-plugins for the detail."
+                f"{', '.join(passed)} forwards --since to 'oc adm node-logs "
+                "--path=FILE', but oc only applies it to journal queries and "
+                "the kubelet does not time-filter files, so whole files are "
+                "collected regardless. Same under plain oc adm must-gather."
+            )
+        if inert:
+            warnings.append(
+                f"--since has no effect on {', '.join(inert)}; "
+                f"{'they collect' if len(inert) > 1 else 'it collects'} "
+                "point-in-time state or whole files."
             )
     for warning in warnings:
         print(f"  warning: {warning}", file=out)

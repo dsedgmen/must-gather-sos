@@ -20,23 +20,26 @@ CORE = "core"
 #: Why --since is not universal, in one paragraph, used by --list-plugins and
 #: by the warning printed when a selection contains plugins that ignore it.
 SINCE_HELP = (
-    "--since / --since-time reach a plugin in two ways: as --since on "
-    "'oc adm inspect' (which trims pod logs), and as --since on "
-    "'oc adm node-logs' journal queries (which trims host service logs). "
-    "They do NOT reach file-based collection: oc attaches the since parameter "
-    "only when the node-logs path is 'journal' (node_logs.go), so plugins that "
-    "fetch files with 'oc adm node-logs --path=FILE' -- audit_logs, "
-    "kas_startup_termination_logs, windows_node_logs -- always return whole "
-    "files. Plugins that copy files out of pods or query Prometheus have no "
-    "time window either. This is upstream behaviour, identical to a plain "
-    "'oc adm must-gather --since'."
+    "--since / --since-time take effect in two places: as --since on "
+    "'oc adm inspect' (trims pod logs), and as --since on 'oc adm node-logs' "
+    "journal queries (trims host service logs). Elsewhere the window is "
+    "accepted but has no effect. Note the distinction: several upstream "
+    "scripts -- audit_logs, kas_startup_termination_logs, windows_node_logs "
+    "-- do pass the since arguments on to 'oc adm node-logs --path=FILE', so "
+    "the plugin supports it; it is the layers underneath that discard it. oc "
+    "attaches the since parameter only when the path is 'journal' "
+    "(pkg/cli/admin/node/logs.go), and the kubelet does not time-filter plain "
+    "file serving even when asked directly. Plugins that copy files out of "
+    "pods or query Prometheus have no window either. All of this is identical "
+    "under a plain 'oc adm must-gather --since'."
 )
 
 SINCE_LABEL = {
     "both": "pod logs + host journals",
     "pod-logs": "pod logs only",
     "journal": "host journals only",
-    "none": "not supported",
+    "passed-through": "passed to oc, but oc/kubelet ignore it for files",
+    "none": "no time window",
 }
 
 _TRUE = {"on", "true", "yes", "1", "enable", "enabled"}
@@ -61,13 +64,19 @@ class Plugin:
         self.options = spec.get("options", {})
         self.superset = bool(spec.get("superset", False))
         self.requires_option = bool(spec.get("requires_option", False))
-        # How far --since actually reaches: pod-logs | journal | both | none.
-        # See SINCE_HELP for why 'none' happens.
+        # How far --since actually reaches:
+        # pod-logs | journal | both | passed-through | none. See SINCE_HELP.
         self.since = spec.get("since", "none")
 
     @property
     def honours_since(self):
-        return self.since != "none"
+        """True only where the window changes what is collected.
+
+        'passed-through' is deliberately False: the script forwards --since to
+        'oc adm node-logs --path=FILE', but oc and the kubelet both ignore it
+        there, so the collection is identical with or without it.
+        """
+        return self.since in ("pod-logs", "journal", "both")
 
     @property
     def is_core(self):

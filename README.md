@@ -109,56 +109,74 @@ $ must-gather-sos --reduce-logs skip_rotated_logs,compress_logs
 
 ### What `--since` can and cannot reach
 
-**`--since` is not universal, and that is an upstream limitation, not a
-wrapper one.** It reaches collection in exactly two ways:
+**`--since` is not universal.** It changes what is collected in exactly two
+places:
 
 | Route | Effect | Plugins |
 | ----- | ------ | ------- |
-| `oc adm inspect --since` | trims **pod logs** | `core` and 12 others |
+| `oc adm inspect --since` | trims **pod logs** | `core` and 13 others |
 | `oc adm node-logs --since` on a **journal** query | trims **host service logs** | `service_logs`, `ppc` |
 
-It reaches nothing else. In particular, `oc adm node-logs` only attaches the
-`since` parameter when the path is `journal`
-([`pkg/cli/admin/node/logs.go`](https://github.com/openshift/oc/blob/master/pkg/cli/admin/node/logs.go)):
+Everywhere else the window is accepted and has no effect.
 
-```go
-if o.Path == "journal" {
-        ...
-        if len(o.Since) > 0 {
-                req.Param("since", o.Since)
-        }
+Worth being precise about one case, because it looks like it should work.
+`gather_audit_logs` **does support `--since`** — it sources `common.sh`, calls
+`get_log_collection_args`, and threads `node_log_collection_args` into both of
+its `oc adm node-logs` calls, with a comment documenting the fifth xargs
+argument as `--since=ISO time`. The plugin is not the problem. The two layers
+underneath it are:
+
+1. **`oc` does not send it.** `oc adm node-logs` attaches the `since`
+   parameter only when the path is `journal`
+   ([`pkg/cli/admin/node/logs.go`](https://github.com/openshift/oc/blob/master/pkg/cli/admin/node/logs.go)):
+
+   ```go
+   if o.Path == "journal" {
+           ...
+           if len(o.Since) > 0 { req.Param("since", o.Since) }
+   ```
+
+   The flag's own help says *"Only applies to node service logs."*
+
+2. **The kubelet would not honour it anyway.** Asked directly, it *validates*
+   the parameter but does not time-filter plain file serving.
+
+Measured on a 4.18.54 cluster at 06:40 UTC, against a file rotated at 19:30
+the previous day:
+
+```console
+$ oc adm node-logs master-0 --path=kube-apiserver              # listing
+$ oc adm node-logs --since=-5m master-0 --path=kube-apiserver  # byte-identical
+
+$ oc get --raw ".../logs/kube-apiserver/audit-2026-10-15T19-30-44.933.log"
+134269 lines, first event 2026-10-15T18:26:39Z
+$ ... "?since=-5m"      -> 134269 lines, same first event
+$ ... "?since=-1h"      -> 134269 lines, same first event
+$ ... "?since=2026-10-16 06:00:00" -> 134269 lines, same first event
 ```
 
-The flag's own help says so: *"Only applies to node service logs."* So plugins
-that fetch **files** with `oc adm node-logs --path=FILE` silently get whole
-files, no matter what you pass:
+So the affected plugins always return whole files: `audit_logs`,
+`kas_startup_termination_logs`, `windows_node_logs`. Plugins that `oc cp`
+files out of pods (`insights`, `haproxy_config`, `core_dumps`, …) or query
+Prometheus (`monitoring`, `metrics`) have no window either. **All of this is
+identical under a plain `oc adm must-gather --since`.**
 
-- `audit_logs` — every rotated `audit-*.log` on every master
-- `kas_startup_termination_logs`
-- `windows_node_logs`
-
-Plugins that `oc cp` files out of pods (`insights`, `haproxy_config`,
-`core_dumps`, …) or query Prometheus (`monitoring`, `metrics`) have no time
-window either.
-
-`must-gather-sos` will not let that surprise you — it says so before it runs:
+`must-gather-sos` will not let it surprise you — it says so before it runs:
 
 ```console
 $ must-gather-sos -o audit_logs -k audit_logs.force=on --since 30m
-  warning: --since does not affect audit_logs; it collects whole files or
-           point-in-time state. Run with --list-plugins for the detail.
+  warning: audit_logs forwards --since to 'oc adm node-logs --path=FILE', but
+           oc only applies it to journal queries and the kubelet does not
+           time-filter files, so whole files are collected regardless.
 ```
 
 `--list-plugins` annotates every plugin with what `--since` does to it, and
 `--list-plugins --format json` exposes it as a `since` field
-(`pod-logs` / `journal` / `both` / `none`).
+(`pod-logs` / `journal` / `both` / `passed-through` / `none`).
 
-To actually bound an audit-log collection, bound the *plugin set* and use
-`--reduce-logs` instead:
-
-```console
-$ must-gather-sos -o audit_logs -k audit_logs.force=on --reduce-logs compress_logs
-```
+Where `--since` *does* work, it works well. `-o core --since 5m` on that same
+cluster left 657 of 916 pod logs empty, with every surviving entry inside the
+window.
 
 ## How it works
 

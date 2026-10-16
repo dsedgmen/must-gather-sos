@@ -139,30 +139,46 @@ Use an alternative plugin catalog instead of the vendored one.
 .B \-\-oc " \fIPATH\fR"
 Path to the \fBoc\fR binary.
 .SH THE REACH OF \-\-SINCE
-\fB\-\-since\fR and \fB\-\-since\-time\fR reach collection in exactly two
-ways, and this is an upstream limitation rather than one this tool adds.
+\fB\-\-since\fR and \fB\-\-since\-time\fR change what is collected in exactly
+two places. This is an upstream limitation, not one this tool adds.
 .TP
 .B oc adm inspect \-\-since
-Trims \fBpod logs\fR. Applies to \fBcore\fR and twelve other plugins.
+Trims \fBpod logs\fR. Applies to \fBcore\fR and thirteen other plugins.
 .TP
 .B oc adm node-logs \-\-since " on a journal query"
 Trims \fBhost service logs\fR. Applies to \fBservice_logs\fR and \fBppc\fR.
 .PP
-Nothing else is affected.
+Everywhere else the window is accepted and has no effect. One case deserves
+spelling out, because it looks like it should work.
+.B gather_audit_logs
+\fIdoes\fR support \fB\-\-since\fR: it sources \fBcommon.sh\fR, calls
+\fBget_log_collection_args\fR and threads \fBnode_log_collection_args\fR into
+both of its \fBoc adm node-logs\fR calls. The plugin is not at fault. The two
+layers beneath it are:
+.IP \(bu 3
 .B oc
-attaches the since parameter only when the node\-logs path is \fBjournal\fR
-(see \fIpkg/cli/admin/node/logs.go\fR in openshift/oc; the flag help reads
-"Only applies to node service logs"). Plugins that fetch files with
-.B oc adm node-logs \-\-path=\fIFILE\fR
-therefore always return whole files, however small a window you ask for:
-\fBaudit_logs\fR, \fBkas_startup_termination_logs\fR and
-\fBwindows_node_logs\fR. Plugins that copy files out of pods, or query
-Prometheus, have no time window either.
+does not send it.
+.B oc adm node-logs
+attaches the \fBsince\fR parameter only when the path is \fBjournal\fR
+(\fIpkg/cli/admin/node/logs.go\fR in openshift/oc); the flag help reads
+"Only applies to node service logs".
+.IP \(bu 3
+The kubelet would not honour it anyway. Asked directly it \fIvalidates\fR the
+parameter but does not time\-filter plain file serving.
+.PP
+Measured on a 4.18.54 cluster: a rotated audit file returned 134269 lines,
+first event 11 hours before the cutoff, identically with no parameter, with
+\fB?since=\-5m\fR, with \fB?since=\-1h\fR and with
+\fB?since=2026\-10\-16 06:00:00\fR.
+.PP
+So \fBaudit_logs\fR, \fBkas_startup_termination_logs\fR and
+\fBwindows_node_logs\fR always return whole files. Plugins that copy files out
+of pods, or query Prometheus, have no window either.
 .PP
 .B must-gather-sos
-warns before it runs when a selected plugin cannot honour the window, and
-\fB\-\-list\-plugins\fR annotates every plugin with what \fB\-\-since\fR
-does to it.
+warns before it runs when a selected plugin cannot act on the window, and
+\fB\-\-list\-plugins\fR annotates every plugin with what \fB\-\-since\fR does
+to it.
 .SH EXAMPLES
 Everything the default gather does, as a baseline:
 .PP

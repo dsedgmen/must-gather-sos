@@ -4,7 +4,7 @@
     "repo": "https://github.com/openshift/must-gather.git",
     "ref": "main",
     "commit": "e2487964fe989e4147fc02cede01ea0bc8a6be7c",
-    "synced": "2026-10-16T06:00:45+00:00"
+    "synced": "2026-10-16T06:41:51+00:00"
   },
   "core": {
     "description": "Base 'oc adm inspect' pass from upstream's gather script: cluster version, cluster operators, API services, CSRs, nodes, core namespaces, storage, image mirroring, networking, leases, API priority and fairness, and cluster resource quotas.",
@@ -73,7 +73,7 @@
       "phase": "parallel",
       "order": 2,
       "description": "kube-apiserver, openshift-apiserver, oauth-apiserver, oauth-server and etcd audit logs from every master, plus prometheus-adapter/metrics-server audit logs. Can be very large.",
-      "since": "none",
+      "since": "passed-through",
       "options": {
         "force": {
           "kind": "flag",
@@ -173,7 +173,7 @@
       "phase": "parallel",
       "order": 9,
       "description": "kube-apiserver startup.log and termination.log (and rotated copies) from each master.",
-      "since": "none"
+      "since": "passed-through"
     },
     "machineconfig_ondisk": {
       "script": "/usr/bin/gather_machineconfig_ondisk",
@@ -242,7 +242,7 @@
       "phase": "parallel",
       "order": 17,
       "description": "Extra OVN-Kubernetes data. WARNING: this script starts by running the complete default gather, so it is a superset of every other plugin.",
-      "since": "none",
+      "since": "pod-logs",
       "superset": true
     },
     "network_logs_basics": {
@@ -410,7 +410,7 @@
       "phase": "parallel",
       "order": 7,
       "description": "Kubernetes component logs from Windows nodes.",
-      "since": "none"
+      "since": "passed-through"
     }
   }
 }

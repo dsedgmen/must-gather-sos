@@ -277,30 +277,40 @@ class TestPrintModes(unittest.TestCase):
 
 
 class TestSinceWarning(unittest.TestCase):
-    def test_warns_when_a_selected_plugin_ignores_since(self):
+    def test_warns_that_audit_logs_forwards_since_to_no_effect(self):
         _, out, _ = run_cli("-o", "audit_logs", "-k", "audit_logs.force=on",
                             "--since", "30m", "--dry-run")
-        self.assertIn("--since does not affect audit_logs", out)
+        self.assertIn("audit_logs forwards --since", out)
+        self.assertIn("whole files are collected regardless", out)
+
+    def test_warns_for_plugins_with_no_time_window(self):
+        _, out, _ = run_cli("-o", "etcd", "--since", "30m", "--dry-run")
+        self.assertIn("--since has no effect on etcd", out)
 
     def test_no_warning_when_every_plugin_honours_since(self):
         _, out, _ = run_cli("-o", "core,sriov", "--since", "30m", "--dry-run")
-        self.assertNotIn("--since does not affect", out)
+        self.assertNotIn("no effect", out)
+        self.assertNotIn("forwards --since", out)
 
     def test_no_warning_without_since(self):
         _, out, _ = run_cli("-o", "audit_logs", "-k", "audit_logs.force=on",
                             "--dry-run")
-        self.assertNotIn("--since does not affect", out)
+        self.assertNotIn("no effect", out)
+        self.assertNotIn("forwards --since", out)
 
     def test_listing_states_since_support_per_plugin(self):
         _, out, _ = run_cli("--list-plugins")
-        self.assertIn("--since: not supported", out)
+        self.assertIn("--since: no time window", out)
+        self.assertIn("--since: pod logs only", out)
+        # wrapped across lines, so match the distinctive fragment
+        self.assertIn("oc/kubelet ignore it for files", " ".join(out.split()))
         self.assertIn("--since: pod logs only", out)
         self.assertIn("about --since:", out)
 
     def test_json_listing_carries_since_support(self):
         _, out, _ = run_cli("--list-plugins", "--format", "json")
         doc = json.loads(out)
-        self.assertEqual(doc["plugins"]["audit_logs"]["since"], "none")
+        self.assertEqual(doc["plugins"]["audit_logs"]["since"], "passed-through")
         self.assertEqual(doc["plugins"]["core"]["since"], "pod-logs")
         self.assertEqual(doc["plugins"]["service_logs"]["since"], "journal")
         self.assertEqual(doc["plugins"]["ppc"]["since"], "both")

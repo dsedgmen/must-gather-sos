@@ -128,16 +128,24 @@ class TestSinceClassification(unittest.TestCase):
     def test_every_plugin_is_classified(self):
         for name, plugin in self.catalog.plugins.items():
             self.assertIn(plugin.since,
-                          {"both", "pod-logs", "journal", "none"}, name)
+                          {"both", "pod-logs", "journal", "passed-through",
+                           "none"}, name)
 
-    def test_file_fetching_plugins_cannot_honour_since(self):
-        # oc only attaches the since parameter when the node-logs path is
-        # 'journal' (openshift/oc pkg/cli/admin/node/logs.go), so these three,
-        # which fetch files with --path=, always return whole files.
+    def test_file_fetching_plugins_forward_since_but_it_has_no_effect(self):
+        # These scripts really do pass the since arguments to oc adm
+        # node-logs, so the plugin supports it -- but oc only attaches the
+        # parameter when the path is 'journal' (openshift/oc
+        # pkg/cli/admin/node/logs.go) and the kubelet does not time-filter
+        # plain file serving, so whole files come back either way.
         for name in ("audit_logs", "kas_startup_termination_logs",
                      "windows_node_logs"):
-            self.assertEqual(self.catalog.get(name).since, "none", name)
+            self.assertEqual(self.catalog.get(name).since, "passed-through",
+                             name)
             self.assertFalse(self.catalog.get(name).honours_since, name)
+
+    def test_plugins_that_never_mention_since(self):
+        for name in ("etcd", "monitoring", "insights"):
+            self.assertEqual(self.catalog.get(name).since, "none", name)
 
     def test_inspect_based_plugins_honour_since(self):
         for name in ("core", "sriov", "olm", "network_logs_basics"):

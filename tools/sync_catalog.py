@@ -391,20 +391,28 @@ def classify_since(scripts_dir, name):
     'journal'   queries host journals with oc adm node-logs and no --path, so
                 the journal query is trimmed.
     'both'      does both of the above.
-    'none'      neither -- including plugins that pass the since arguments to
-                'oc adm node-logs --path=FILE', where oc silently drops them:
-                node_logs.go only attaches the 'since' parameter when the path
-                is 'journal' (the flag help says "Only applies to node service
-                logs").
+    'passed-through'
+                the script does pass the since arguments to
+                'oc adm node-logs --path=FILE', so the plugin itself supports
+                the window -- but it has no effect. oc attaches the 'since'
+                parameter only when the path is 'journal' (node_logs.go; the
+                flag help says "Only applies to node service logs"), and the
+                kubelet does not time-filter plain file serving even when the
+                parameter is supplied directly.
+    'none'      the script never references the since arguments at all.
     """
     text = _script_text(scripts_dir, name)
     pod_logs = "${log_collection_args}" in text
 
     journal = False
+    file_passthrough = False
     for line in text.splitlines():
         if "node-logs" not in line or line.lstrip().startswith("#"):
             continue
-        if "--path" not in line:
+        if "--path" in line:
+            if "node_log_collection_args" in line or re.search(r"\$\{?5\}?", line):
+                file_passthrough = True
+        else:
             journal = True
 
     if pod_logs and journal:
@@ -413,6 +421,8 @@ def classify_since(scripts_dir, name):
         return "pod-logs"
     if journal:
         return "journal"
+    if file_passthrough:
+        return "passed-through"
     return "none"
 
 
