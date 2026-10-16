@@ -29,7 +29,15 @@ import tempfile
 REPO = "https://github.com/openshift/must-gather.git"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_OUT = os.path.join(HERE, os.pardir, "must_gather_sos", "data", "openshift.json")
+ROOT = os.path.normpath(os.path.join(HERE, os.pardir))
+DEFAULT_OUT = os.path.join(ROOT, "must_gather_sos", "data", "openshift.json")
+
+#: Upstream files copied verbatim for the integration test to run against, so
+#: our assumptions about get_log_collection_args are checked against the real
+#: thing rather than a paraphrase of it.
+VENDORED = {
+    "collection-scripts/common.sh": "tests/data/upstream/common.sh",
+}
 
 # Scripts in collection-scripts/ that are not plugins.
 NOT_PLUGINS = {
@@ -443,6 +451,11 @@ def main(argv=None):
     src, commit, cleanup = fetch_source(args.ref, args.src)
     try:
         catalog = build_catalog(src, args.ref, commit)
+        for upstream_path, local_path in VENDORED.items():
+            target = os.path.join(ROOT, local_path)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copyfile(os.path.join(src, upstream_path), target)
+            print(f"vendored {local_path}")
     finally:
         if cleanup:
             shutil.rmtree(cleanup, ignore_errors=True)

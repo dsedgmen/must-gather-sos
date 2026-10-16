@@ -1,0 +1,201 @@
+.TH MUST-GATHER-SOS 1 "2026-10-16" "must-gather-sos 0.1.0" "User Commands"
+.SH NAME
+must-gather-sos \- sos-style plugin selection for \fBoc adm must-gather\fR
+.SH SYNOPSIS
+.B must-gather-sos
+.RI [ options ]
+.br
+.B must-gather-sos
+.B \-\-list\-plugins
+.SH DESCRIPTION
+.B oc adm must-gather
+is all\-or\-nothing: its default entrypoint runs a base
+.B oc adm inspect
+pass plus roughly twenty\-five
+.B gather_*
+scripts, and the only supported alternative is running exactly one of them by
+hand with
+.BR "oc adm must-gather -- /usr/bin/gather_audit_logs" .
+.PP
+.B must-gather-sos
+adds the selection vocabulary that
+.BR sos-report (1)
+has long had for hosts. It generates a collection script covering just the
+plugins you asked for, hands it to
+.B oc adm must-gather
+and leaves the result in the same directory layout
+.B oc
+would have produced, plus a
+.B manifest.json
+describing the run.
+.PP
+Plugins are named after the upstream scripts with the
+.B gather_
+prefix removed, so
+.B /usr/bin/gather_audit_logs
+is the
+.B audit_logs
+plugin. One extra, synthetic plugin named
+.B core
+stands for the base
+.B oc adm inspect
+pass that upstream performs inline; it is enabled by default, and
+.B \-o
+selections that omit it get no base inspect at all.
+.SH OPTIONS
+.SS Plugin selection
+.TP
+.BR \-l ", " \-\-list\-plugins
+List the available plugins, which are on by default, and what options each
+accepts. Combine with \fB\-\-format json\fR for machine\-readable output.
+.TP
+.B \-\-list\-plugin\-names
+Print bare plugin names, one per line. Used by the shell completions.
+.TP
+.B \-\-list\-plugin\-options
+Print bare \fIplugin.option\fR keys, one per line.
+.TP
+.BR \-o ", " \-\-only\-plugins " \fILIST\fR"
+Run only these plugins. Cannot be combined with \fB\-n\fR or \fB\-e\fR.
+.TP
+.BR \-n ", " \-\-skip\-plugins " \fILIST\fR"
+Run the default set except these.
+.TP
+.BR \-e ", " \-\-enable\-plugins " \fILIST\fR"
+Additionally run these plugins, which are off by default.
+.TP
+.BR \-a ", " \-\-all\-plugins
+Run every plugin. Plugins that refuse to start without a \fB\-k\fR option, and
+plugins that re\-run the entire default gather, are left out; the command says
+which and why.
+.TP
+.BR \-k ", " \-\-plugin\-option " \fIPLUG.OPT=VAL\fR"
+Set a plugin option; repeatable. Boolean options accept \fBon\fR/\fBoff\fR and
+may be given bare. Repeatable options such as \fBmetrics.match\fR take their
+value verbatim, so a value containing commas or spaces stays one value.
+.SS Collection
+.TP
+.B \-\-since " \fIDURATION\fR"
+Only collect logs newer than e.g. \fB5m\fR or \fB2h\fR. Passed to
+.BR oc ,
+which sets \fBMUST_GATHER_SINCE\fR in the pod; the generated script sources
+\fB/usr/bin/common.sh\fR so every plugin honours it.
+.TP
+.B \-\-since\-time " \fIRFC3339\fR"
+Only collect logs after a specific time, e.g. \fB2026\-10\-16T09:00:00Z\fR.
+Mutually exclusive with \fB\-\-since\fR.
+.TP
+.B \-\-reduce\-logs " \fILIST\fR"
+Comma separated, any of \fBskip_rotated_logs\fR, \fBcompress_service_logs\fR,
+\fBcompress_logs\fR. Exported as \fBREDUCE_LOGS\fR for \fBcommon.sh\fR.
+.SS Output
+.TP
+.B \-\-dest\-dir " \fIDIR\fR"
+Write gathered data here. Defaults to \fBmust\-gather.local.\fIRAND\fR in the
+current directory, matching \fBoc\fR's own naming.
+.TP
+.B \-\-case\-id " \fIID\fR"
+Support case number. Recorded in \fBmanifest.json\fR and used in the archive
+name.
+.TP
+.BR \-\-archive " [\fIFORMAT\fR]"
+Tar up the result. \fIFORMAT\fR is \fBxz\fR (the default), \fBgz\fR or
+\fBnone\fR.
+.TP
+.B \-\-no\-manifest
+Do not write \fBmanifest.json\fR into the output.
+.SS Passed through to oc adm must\-gather
+.B \-\-image\fR,
+.B \-\-image\-stream\fR,
+.B \-\-timeout\fR,
+.B \-\-node\-name\fR,
+.B \-\-node\-selector\fR,
+.B \-\-run\-namespace\fR,
+.B \-\-host\-network\fR,
+.B \-\-volume\-percentage\fR,
+.BR \-\-source\-dir .
+Only one \fB\-\-image\fR is accepted, because the catalog describes a single
+image's plugin layout.
+.SS Behaviour
+.TP
+.B \-\-dry\-run
+Print the generated in\-pod script and the \fBoc\fR command, and run nothing.
+Needs no cluster.
+.TP
+.B \-\-batch
+Do not prompt for confirmation.
+.TP
+.B \-\-catalog " \fIPATH\fR"
+Use an alternative plugin catalog instead of the vendored one.
+.TP
+.B \-\-oc " \fIPATH\fR"
+Path to the \fBoc\fR binary.
+.SH EXAMPLES
+Everything the default gather does, as a baseline:
+.PP
+.RS
+.B must-gather-sos
+.RE
+.PP
+The defaults minus two noisy plugins, last two hours only:
+.PP
+.RS
+.B must-gather-sos \-n monitoring,istio \-\-since 2h
+.RE
+.PP
+Only etcd and SR\-IOV, with the base inspect pass:
+.PP
+.RS
+.B must-gather-sos \-o core,etcd,sriov
+.RE
+.PP
+Audit logs even though the audit profile is None:
+.PP
+.RS
+.B must-gather-sos \-o audit_logs \-k audit_logs.force=on \-\-since 30m
+.RE
+.PP
+A bundle to attach to a support case:
+.PP
+.RS
+.B must-gather-sos \-o core,etcd \-\-case\-id 04123456 \-\-archive
+.RE
+.SH FILES
+.TP
+.I must_gather_sos/data/openshift.json
+The vendored plugin catalog, generated from openshift/must\-gather by
+\fBtools/sync_catalog.py\fR.
+.TP
+.I <output>/manifest.json
+What ran, with what options, against which cluster, and each plugin's exit
+status and duration.
+.TP
+.I <output>/must-gather-sos-script.sh
+A copy of the script that ran inside the pod.
+.TP
+.I <output>/must-gather-sos-plugins.log
+Raw per\-plugin results written in the pod: name, exit code, seconds.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+A problem with the request, reported without a traceback.
+.TP
+.B 2
+Invalid command line.
+.TP
+.B 130
+Interrupted.
+.PP
+Any other value is \fBoc\fR's own exit code, passed through. Note that
+individual plugin failures do not change the exit status; check the summary
+printed at the end, or \fBmanifest.json\fR.
+.SH SEE ALSO
+.BR oc (1),
+.BR sos-report (1)
+.PP
+https://github.com/openshift/must-gather
+.SH AUTHOR
+David Sedgmen

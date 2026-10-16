@@ -50,6 +50,11 @@ def build_parser():
                            help="list available plugins and exit")
     selection.add_argument("--format", choices=("text", "json"), default="text",
                            help="output format for --list-plugins (default text)")
+    selection.add_argument("--list-plugin-names", action="store_true",
+                           help="print bare plugin names, one per line "
+                                "(for scripting and shell completion)")
+    selection.add_argument("--list-plugin-options", action="store_true",
+                           help="print bare 'plugin.option' keys, one per line")
     selection.add_argument("-o", "--only-plugins", metavar="LIST", default="",
                            help="run only these plugins (comma separated); "
                                 "include 'core' to keep the base oc adm inspect pass")
@@ -274,6 +279,18 @@ def main(argv=None):
 
 def _run(args):
     catalog = Catalog.load(args.catalog)
+
+    if args.list_plugin_names:
+        print("\n".join(sorted(catalog.names)))
+        return 0
+
+    if args.list_plugin_options:
+        print("\n".join(sorted(
+            f"{name}.{opt}"
+            for name, plugin in catalog.plugins.items()
+            for opt in plugin.options
+        )))
+        return 0
 
     if args.list_plugins:
         return list_plugins(catalog, args.format == "json")

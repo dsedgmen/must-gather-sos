@@ -1,0 +1,52 @@
+#compdef must-gather-sos
+# zsh completion for must-gather-sos
+#
+# Install: cp _must-gather-sos somewhere on $fpath, e.g.
+#          /usr/share/zsh/site-functions/_must-gather-sos
+
+_must_gather_sos_plugins() {
+	local -a names
+	names=(${(f)"$(must-gather-sos --list-plugin-names 2>/dev/null)"})
+	_values -s , 'plugin' $names
+}
+
+_must_gather_sos_option_keys() {
+	local -a keys
+	keys=(${(f)"$(must-gather-sos --list-plugin-options 2>/dev/null)"})
+	_describe -t options 'plugin option' keys
+}
+
+_arguments -s -S \
+	'(- *)--help[show help and exit]' \
+	'(- *)--version[show version and exit]' \
+	'(-l --list-plugins)'{-l,--list-plugins}'[list available plugins and exit]' \
+	'--format[output format for --list-plugins]:format:(text json)' \
+	'--list-plugin-names[print bare plugin names, one per line]' \
+	'--list-plugin-options[print bare plugin.option keys, one per line]' \
+	'(-o --only-plugins)'{-o,--only-plugins}'[run only these plugins]:plugins:_must_gather_sos_plugins' \
+	'(-n --skip-plugins)'{-n,--skip-plugins}'[run the defaults except these]:plugins:_must_gather_sos_plugins' \
+	'(-e --enable-plugins)'{-e,--enable-plugins}'[also run these non-default plugins]:plugins:_must_gather_sos_plugins' \
+	'(-a --all-plugins)'{-a,--all-plugins}'[run every plugin]' \
+	\*{-k,--plugin-option}'[set a plugin option]:option:_must_gather_sos_option_keys' \
+	'--since[only logs newer than a duration]:duration:(30s 5m 30m 1h 2h 6h 24h)' \
+	'--since-time[only logs after an RFC3339 time]:time:' \
+	'--reduce-logs[log reduction options]:options:_values -s , opt skip_rotated_logs compress_service_logs compress_logs' \
+	'--dest-dir[write gathered data here]:directory:_files -/' \
+	'--case-id[support case number]:case id:' \
+	'--archive[tar up the result]::format:(xz gz none)' \
+	'--no-manifest[do not write manifest.json]' \
+	\*'--image[must-gather plugin image]:image:' \
+	'--image-stream[image stream to use]:imagestream:' \
+	'--timeout[how long to gather for]:duration:' \
+	'--node-name[run the pod on this node]:node:' \
+	'--node-selector[node selector]:selector:' \
+	'--run-namespace[existing privileged namespace]:namespace:' \
+	'--host-network[run the pod with hostNetwork]' \
+	'--volume-percentage[max volume usage percentage]:percent:' \
+	'--source-dir[directory in the pod to copy from]:directory:' \
+	'--dry-run[print the generated script and oc command, run nothing]' \
+	'--batch[do not prompt for confirmation]' \
+	'(-q --quiet)'{-q,--quiet}'[quieter output]' \
+	'(-v --verbose)'{-v,--verbose}'[more output]' \
+	'--catalog[use an alternative plugin catalog]:catalog:_files' \
+	'--oc[path to the oc binary]:oc:_files'
