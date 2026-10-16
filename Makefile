@@ -2,6 +2,9 @@ PYTHON  ?= python3
 PREFIX  ?= /usr/local
 DESTDIR ?=
 REF     ?= main
+# Add --no-build-isolation --no-index to install without reaching the network
+# (needs setuptools already present, which it usually is on a distro python).
+PIP_FLAGS ?=
 
 .PHONY: help test lint check golden sync-catalog man install uninstall clean
 
@@ -43,7 +46,7 @@ man:
 	man -l share/man/must-gather-sos.1
 
 install:
-	$(PYTHON) -m pip install --prefix=$(PREFIX) --root=$(DESTDIR)/ .
+	$(PYTHON) -m pip install $(PIP_FLAGS) --prefix=$(PREFIX) --root=$(DESTDIR)/ .
 	install -Dm644 share/man/must-gather-sos.1 \
 		$(DESTDIR)$(PREFIX)/share/man/man1/must-gather-sos.1
 	install -Dm644 share/completion/must-gather-sos.bash \

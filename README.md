@@ -38,7 +38,10 @@ Python 3.9+ and `oc`. No third-party Python packages — standard library only.
 ```console
 $ make install                 # into /usr/local
 $ make install PREFIX=~/.local
+$ make install PIP_FLAGS='--no-build-isolation --no-index'   # fully offline
 ```
+
+This installs the CLI, the man page and the bash/zsh completions.
 
 Or run straight from a checkout, no install needed:
 
