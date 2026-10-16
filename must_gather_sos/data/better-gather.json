@@ -1,0 +1,416 @@
+{
+  "catalog_version": 1,
+  "source": {
+    "repo": "https://github.com/openshift/must-gather.git",
+    "ref": "better-gather",
+    "commit": "e874dcb088005050f9e186b2d723e93bc10383d4",
+    "synced": "2026-10-16T23:11:24+00:00"
+  },
+  "core": {
+    "description": "Base 'oc adm inspect' pass from upstream's gather script: cluster version, cluster operators, API services, CSRs, nodes, core namespaces, storage, image mirroring, networking, leases, API priority and fairness, and cluster resource quotas.",
+    "since": "pod-logs",
+    "named_resources": [
+      "ns/openshift-cluster-version",
+      "ns/default",
+      "ns/openshift",
+      "ns/kube-system",
+      "ns/openshift-etcd",
+      "ns/assisted-installer"
+    ],
+    "group_resources": [
+      "clusterversion",
+      "clusteroperators",
+      "apiservices",
+      "certificatesigningrequests",
+      "nodes",
+      "storageclasses",
+      "persistentvolumes",
+      "volumeattachments",
+      "csidrivers",
+      "csinodes",
+      "volumesnapshotclasses",
+      "volumesnapshotcontents",
+      "volumegroupsnapshotclasses",
+      "volumegroupsnapshotcontents",
+      "clustercsidrivers",
+      "volumeattributesclasses",
+      "imagecontentsourcepolicies.operator.openshift.io",
+      "imagedigestmirrorsets.config.openshift.io",
+      "imagetagmirrorsets.config.openshift.io",
+      "osimagestreams.machineconfiguration.openshift.io",
+      "internalreleaseimages.machineconfiguration.openshift.io",
+      "networks.operator.openshift.io",
+      "pacemakerclusters.etcd.openshift.io",
+      "prioritylevelconfigurations.flowcontrol.apiserver.k8s.io",
+      "flowschemas.flowcontrol.apiserver.k8s.io",
+      "clusterresourcequotas.quota.openshift.io"
+    ],
+    "all_ns_resources": [
+      "csistoragecapacities",
+      "leases"
+    ]
+  },
+  "plugins": {
+    "apirequestcounts": {
+      "script": "/usr/bin/gather_apirequestcounts",
+      "default": false,
+      "phase": "parallel",
+      "order": 0,
+      "description": "APIRequestCount resources plus top-20 resource and user summaries for the last 24h (needs jq in the image).",
+      "since": "none"
+    },
+    "aro": {
+      "script": "/usr/bin/gather_aro",
+      "default": true,
+      "phase": "post",
+      "order": 24,
+      "description": "Azure Red Hat OpenShift cluster resources. No-op on non-ARO clusters.",
+      "since": "none"
+    },
+    "audit_logs": {
+      "script": "/usr/bin/gather_audit_logs",
+      "default": false,
+      "phase": "parallel",
+      "order": 2,
+      "description": "kube-apiserver, openshift-apiserver, oauth-apiserver, oauth-server and etcd audit logs from every master, plus prometheus-adapter/metrics-server audit logs. Can be very large.",
+      "since": "files",
+      "options": {
+        "force": {
+          "kind": "flag",
+          "type": "bool",
+          "flag": "--force",
+          "help": "Collect even when spec.audit.profile is None (the script otherwise refuses and exits 1)."
+        }
+      }
+    },
+    "core_dumps": {
+      "script": "/usr/bin/gather_core_dumps",
+      "default": false,
+      "phase": "parallel",
+      "order": 3,
+      "description": "systemd coredumps from /var/lib/systemd/coredump on every node, via oc debug. Can be very large.",
+      "since": "files",
+      "options": {
+        "out": {
+          "kind": "env",
+          "type": "str",
+          "env": "OUT",
+          "help": "Override the output directory inside the pod."
+        }
+      }
+    },
+    "etcd": {
+      "script": "/usr/bin/gather_etcd",
+      "default": true,
+      "phase": "parallel",
+      "order": 5,
+      "description": "etcd member list, endpoint health and status, and alarm list from a running etcd pod.",
+      "since": "none"
+    },
+    "etcd_more": {
+      "script": "/usr/bin/gather_etcd_more",
+      "default": false,
+      "phase": "parallel",
+      "order": 5,
+      "description": "Extended etcd diagnostics: per-pod endpoint data, cluster-etcd-operator state and the last 24h of etcd metrics.",
+      "since": "none"
+    },
+    "frrk8s": {
+      "script": "/usr/bin/gather_frrk8s",
+      "default": true,
+      "phase": "parallel",
+      "order": 12,
+      "description": "FRR-K8s (openshift-frr-k8s) CRs, pod logs and FRR runtime state. No-op if not installed.",
+      "since": "pod-logs"
+    },
+    "haproxy_config": {
+      "script": "/usr/bin/gather_haproxy_config",
+      "default": true,
+      "phase": "parallel",
+      "order": 8,
+      "description": "haproxy.config from each router pod of every IngressController.",
+      "since": "none"
+    },
+    "ingress_node_firewall": {
+      "script": "/usr/bin/gather_ingress_node_firewall",
+      "default": false,
+      "phase": "parallel",
+      "order": 8,
+      "description": "Ingress Node Firewall operator CRs and logs. No-op if the operator is not subscribed.",
+      "since": "pod-logs"
+    },
+    "insights": {
+      "script": "/usr/bin/gather_insights",
+      "default": true,
+      "phase": "parallel",
+      "order": 0,
+      "description": "Insights Operator archives from /var/lib/insights-operator.",
+      "since": "files",
+      "options": {
+        "collector": {
+          "kind": "positional",
+          "type": "str",
+          "index": 0,
+          "choices": [
+            "rsync",
+            "cp"
+          ],
+          "help": "oc subcommand used to pull the archives (default rsync)."
+        }
+      }
+    },
+    "istio": {
+      "script": "/usr/bin/gather_istio",
+      "default": true,
+      "phase": "parallel",
+      "order": 23,
+      "description": "Istio / OpenShift Service Mesh and Gateway API resources. No-op if not installed.",
+      "since": "pod-logs"
+    },
+    "kas_startup_termination_logs": {
+      "script": "/usr/bin/gather_kas_startup_termination_logs",
+      "default": true,
+      "phase": "parallel",
+      "order": 9,
+      "description": "kube-apiserver startup.log and termination.log (and rotated copies) from each master.",
+      "since": "files"
+    },
+    "machineconfig_ondisk": {
+      "script": "/usr/bin/gather_machineconfig_ondisk",
+      "default": true,
+      "phase": "parallel",
+      "order": 18,
+      "description": "On-disk MachineConfig content and bootstrap config diffs from nodes in a Degraded state.",
+      "since": "none"
+    },
+    "machineconfigdaemon_termination_logs": {
+      "script": "/usr/bin/gather_machineconfigdaemon_termination_logs",
+      "default": true,
+      "phase": "parallel",
+      "order": 19,
+      "description": "Previous machine-config-daemon logs (/etc/machine-config-daemon/previous-logs) from every node.",
+      "since": "files"
+    },
+    "metallb": {
+      "script": "/usr/bin/gather_metallb",
+      "default": true,
+      "phase": "parallel",
+      "order": 11,
+      "description": "MetalLB operator CRs, speaker/controller logs and FRR state. No-op if the operator is not subscribed.",
+      "since": "pod-logs"
+    },
+    "metrics": {
+      "script": "/usr/bin/gather_metrics",
+      "default": false,
+      "phase": "parallel",
+      "order": 15,
+      "description": "Dump raw Prometheus TSDB data in OpenMetrics format. Refuses to run without at least one of min_time, max_time or match, because an unbounded dump can destabilise Prometheus.",
+      "since": "none",
+      "requires_option": true,
+      "options": {
+        "min_time": {
+          "kind": "opt",
+          "type": "str",
+          "flag": "--min-time",
+          "help": "Minimum timestamp to dump, in milliseconds."
+        },
+        "max_time": {
+          "kind": "opt",
+          "type": "str",
+          "flag": "--max-time",
+          "help": "Maximum timestamp to dump, in milliseconds."
+        },
+        "match": {
+          "kind": "opt",
+          "type": "list",
+          "flag": "--match",
+          "help": "Prometheus series selector. Repeatable."
+        }
+      }
+    },
+    "monitoring": {
+      "script": "/usr/bin/gather_monitoring",
+      "default": true,
+      "phase": "parallel",
+      "order": 1,
+      "description": "openshift-monitoring state: Prometheus and Alertmanager status, targets, rules, firing alerts and TSDB stats.",
+      "since": "none"
+    },
+    "network_logs": {
+      "script": "/usr/bin/gather_network_logs",
+      "default": false,
+      "phase": "parallel",
+      "order": 17,
+      "description": "Extra OVN-Kubernetes data. WARNING: this script starts by running the complete default gather, so it is a superset of every other plugin.",
+      "since": "files",
+      "superset": true
+    },
+    "network_logs_basics": {
+      "script": "/usr/bin/gather_network_logs_basics",
+      "default": true,
+      "phase": "parallel",
+      "order": 10,
+      "description": "Core networking: cluster network operator, OVN-Kubernetes / SDN namespaces and pods, and network CRs.",
+      "since": "pod-logs"
+    },
+    "nfd": {
+      "script": "/usr/bin/gather_nfd",
+      "default": true,
+      "phase": "parallel",
+      "order": 14,
+      "description": "Node Feature Discovery CRs and operator logs. No-op if the operator is not subscribed.",
+      "since": "pod-logs"
+    },
+    "nmstate": {
+      "script": "/usr/bin/gather_nmstate",
+      "default": true,
+      "phase": "parallel",
+      "order": 13,
+      "description": "kubernetes-nmstate CRs (NNCP, NNCE, NodeNetworkState) and operator logs. No-op if the operator is not subscribed.",
+      "since": "pod-logs"
+    },
+    "olm": {
+      "script": "/usr/bin/gather_olm",
+      "default": true,
+      "phase": "parallel",
+      "order": 2,
+      "description": "Operator Lifecycle Manager resources across all namespaces.",
+      "since": "pod-logs"
+    },
+    "olm_v1": {
+      "script": "/usr/bin/gather_olm_v1",
+      "default": true,
+      "phase": "parallel",
+      "order": 3,
+      "description": "OLM v1 (olm.operatorframework.io) ClusterExtensions, ClusterCatalogs and related resources.",
+      "since": "pod-logs"
+    },
+    "osus": {
+      "script": "/usr/bin/gather_osus",
+      "default": true,
+      "phase": "parallel",
+      "order": 22,
+      "description": "OpenShift Update Service (OSUS) resources. No-op if the operator is not installed.",
+      "since": "pod-logs"
+    },
+    "podnetworkconnectivitycheck": {
+      "script": "/usr/bin/gather_podnetworkconnectivitycheck",
+      "default": true,
+      "phase": "parallel",
+      "order": 17,
+      "description": "PodNetworkConnectivityCheck resources from openshift-network-diagnostics.",
+      "since": "none"
+    },
+    "ppc": {
+      "script": "/usr/bin/gather_ppc",
+      "default": true,
+      "phase": "parallel",
+      "order": 21,
+      "description": "Performance profile and node tuning data: tuned profiles, kubelet config and per-node collection via the NTO image.",
+      "since": "both",
+      "env_if_core": {
+        "MUST_GATHER_NODES_INSPECTED": "true"
+      }
+    },
+    "priority_and_fairness": {
+      "script": "/usr/bin/gather_priority_and_fairness",
+      "default": true,
+      "phase": "parallel",
+      "order": 4,
+      "description": "API Priority and Fairness debug endpoints, which oc adm inspect deliberately skips.",
+      "since": "none"
+    },
+    "profiling_node": {
+      "script": "/usr/bin/gather_profiling_node",
+      "default": false,
+      "phase": "parallel",
+      "order": 27,
+      "description": "pprof profiles from kubelet and CRI-O on nodes.",
+      "since": "none",
+      "options": {
+        "seconds": {
+          "kind": "env",
+          "type": "str",
+          "env": "PROFILING_NODE_SECONDS",
+          "help": "Profile duration in seconds (default 30)."
+        },
+        "target": {
+          "kind": "env",
+          "type": "str",
+          "env": "PROFILING_NODE_TARGET",
+          "help": "Node name to profile, or ALL (default ALL)."
+        },
+        "image": {
+          "kind": "env",
+          "type": "str",
+          "env": "PROFILING_NODE_IMAGE",
+          "help": "Support-tools image used to run the profiler."
+        }
+      }
+    },
+    "service_logs": {
+      "script": "/usr/bin/gather_service_logs",
+      "default": true,
+      "phase": "parallel",
+      "order": 6,
+      "description": "Host systemd service journals (crio, kubelet, NetworkManager, openvswitch, ...) collected with oc adm node-logs.",
+      "since": "journal",
+      "args": [
+        "master"
+      ],
+      "options": {
+        "roles": {
+          "kind": "positional",
+          "type": "str",
+          "index": 0,
+          "choices": [
+            "master",
+            "worker",
+            "master,worker",
+            "worker,master"
+          ],
+          "help": "Which node role(s) to collect from (default master)."
+        },
+        "services": {
+          "kind": "positional",
+          "type": "list",
+          "index": 1,
+          "separator": " ",
+          "help": "Override the systemd unit list, comma separated."
+        }
+      }
+    },
+    "sriov": {
+      "script": "/usr/bin/gather_sriov",
+      "default": true,
+      "phase": "parallel",
+      "order": 15,
+      "description": "SR-IOV Network Operator CRs, node states and operator logs. No-op if the operator is not subscribed.",
+      "since": "pod-logs"
+    },
+    "virt": {
+      "script": "/usr/bin/gather_virt",
+      "default": true,
+      "phase": "parallel",
+      "order": 16,
+      "description": "OpenShift Virtualization / KubeVirt and Forklift custom resource summaries.",
+      "since": "none"
+    },
+    "vsphere": {
+      "script": "/usr/bin/gather_vsphere",
+      "default": true,
+      "phase": "parallel",
+      "order": 20,
+      "description": "vSphere CSI driver CRDs and configuration. No-op on non-vSphere platforms.",
+      "since": "pod-logs"
+    },
+    "windows_node_logs": {
+      "script": "/usr/bin/gather_windows_node_logs",
+      "default": true,
+      "phase": "parallel",
+      "order": 7,
+      "description": "Kubernetes component logs from Windows nodes.",
+      "since": "passed-through"
+    }
+  }
+}

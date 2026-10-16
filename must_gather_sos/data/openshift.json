@@ -4,7 +4,7 @@
     "repo": "https://github.com/openshift/must-gather.git",
     "ref": "main",
     "commit": "e2487964fe989e4147fc02cede01ea0bc8a6be7c",
-    "synced": "2026-10-16T06:41:51+00:00"
+    "synced": "2026-10-16T23:11:24+00:00"
   },
   "core": {
     "description": "Base 'oc adm inspect' pass from upstream's gather script: cluster version, cluster operators, API services, CSRs, nodes, core namespaces, storage, image mirroring, networking, leases, API priority and fairness, and cluster resource quotas.",

@@ -156,3 +156,38 @@ class TestSinceClassification(unittest.TestCase):
 
     def test_ppc_honours_since_both_ways(self):
         self.assertEqual(self.catalog.get("ppc").since, "both")
+
+
+class TestForkCatalog(unittest.TestCase):
+    """The shipped better-gather catalog, for runs against that image."""
+
+    FORK = os.path.join(os.path.dirname(CATALOG_PATH), "better-gather.json")
+
+    def setUp(self):
+        if not os.path.exists(self.FORK):
+            self.skipTest("better-gather catalog not shipped")
+        self.upstream = Catalog.load()
+        self.fork = Catalog.load(self.FORK)
+
+    def test_same_plugin_set_as_upstream(self):
+        self.assertEqual(set(self.fork.names), set(self.upstream.names))
+
+    def test_fork_applies_the_window_to_file_collection(self):
+        # These are exactly the plugins better-gather teaches to honour the
+        # window; upstream cannot, because oc never passes it through.
+        for name in ("audit_logs", "kas_startup_termination_logs",
+                     "insights", "core_dumps",
+                     "machineconfigdaemon_termination_logs"):
+            with self.subTest(plugin=name):
+                self.assertFalse(self.upstream.get(name).honours_since, name)
+                self.assertEqual(self.fork.get(name).since, "files", name)
+                self.assertTrue(self.fork.get(name).honours_since, name)
+
+    def test_fork_never_reports_less_support_than_upstream(self):
+        for name in self.upstream.names:
+            if self.upstream.get(name).honours_since:
+                self.assertTrue(self.fork.get(name).honours_since, name)
+
+    def test_windows_node_logs_is_honestly_still_unsupported(self):
+        # Fixed filenames, nothing for a window to select between.
+        self.assertFalse(self.fork.get("windows_node_logs").honours_since)

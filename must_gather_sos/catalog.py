@@ -38,6 +38,7 @@ SINCE_LABEL = {
     "both": "pod logs + host journals",
     "pod-logs": "pod logs only",
     "journal": "host journals only",
+    "files": "file selection, applied by the collection script itself",
     "passed-through": "passed to oc, but oc/kubelet ignore it for files",
     "none": "no time window",
 }
@@ -76,7 +77,7 @@ class Plugin:
         'oc adm node-logs --path=FILE', but oc and the kubelet both ignore it
         there, so the collection is identical with or without it.
         """
-        return self.since in ("pod-logs", "journal", "both")
+        return self.since in ("pod-logs", "journal", "both", "files")
 
     @property
     def is_core(self):

@@ -297,7 +297,21 @@ every resync is a reviewable diff. Human descriptions and plugin option specs
 live in the `OVERLAY` table in `tools/sync_catalog.py` and are merged in at
 sync time.
 
-Point at a different catalog with `--catalog PATH`.
+Point at a different catalog with `--catalog PATH`. A second catalog ships
+for [better-gather](https://github.com/dsedgmen/better-gather), a fork of
+must-gather that applies the window to file collection itself:
+
+```console
+$ must-gather-sos --catalog must_gather_sos/data/better-gather.json \
+      --image <better-gather-image> --run-namespace <ns> -o audit_logs --since 30m
+```
+
+Against that image the `--since` warnings correctly go away for the plugins
+the fork fixes — `audit_logs`, `kas_startup_termination_logs`, `insights`,
+`core_dumps`, `machineconfigdaemon_termination_logs` and `network_logs` all
+move from `passed-through`/`none` to `files`. `windows_node_logs` honestly
+stays unsupported: it fetches fixed filenames, so there is nothing for a
+window to select between.
 
 ## Development
 

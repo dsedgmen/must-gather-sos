@@ -399,10 +399,19 @@ def classify_since(scripts_dir, name):
                 flag help says "Only applies to node service logs"), and the
                 kubelet does not time-filter plain file serving even when the
                 parameter is supplied directly.
+    'files'     the script applies the window to file collection itself,
+                using the helpers in since_common.sh. Forks can do this; stock
+                must-gather cannot, because oc never hands it the parameter.
     'none'      the script never references the since arguments at all.
     """
     text = _script_text(scripts_dir, name)
     pod_logs = "${log_collection_args}" in text
+
+    # A fork that applies the window itself (see better-gather).
+    if any(helper in text for helper in (
+            "filter_names_since", "since_find_predicate",
+            "copy_pod_dir_since", "trim_jsonl_since")):
+        return "both" if pod_logs else "files"
 
     journal = False
     file_passthrough = False
@@ -478,6 +487,13 @@ def build_catalog(src, ref, commit):
                 else:
                     plugin["env"] = dict(inv["env"])
 
+        # The overlay is hand-maintained for things that cannot be derived,
+        # but `since` *can* be derived for a fork that applies the window
+        # itself. Treat the overlay value as a floor, not an override, so a
+        # fork is never reported as less capable than it is.
+        overlay_since = overlay.pop("since", None)
+        if overlay_since and plugin["since"] == "none":
+            plugin["since"] = overlay_since
         plugin.update(overlay)  # options, superset, requires_option
         plugins[name] = plugin
 
@@ -516,7 +532,11 @@ def main(argv=None):
     src, commit, cleanup = fetch_source(args.ref, args.src)
     try:
         catalog = build_catalog(src, args.ref, commit)
-        for upstream_path, local_path in VENDORED.items():
+        # Only refresh the vendored fixtures from the canonical upstream
+        # repo; syncing a fork must not overwrite them with the fork's copy.
+        vendor = args.src is None or args.ref in ("main", "master") or \
+            args.ref.startswith("release-")
+        for upstream_path, local_path in (VENDORED.items() if vendor else ()):
             target = os.path.join(ROOT, local_path)
             os.makedirs(os.path.dirname(target), exist_ok=True)
             shutil.copyfile(os.path.join(src, upstream_path), target)
