@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# must-gather output
+must-gather.local.*/
+must-gather-*.tar.*
+*.tar.xz
+*.tar.gz
+
+# sync-catalog scratch space
+.cache/
