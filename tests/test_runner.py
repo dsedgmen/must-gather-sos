@@ -7,6 +7,8 @@ before the pod's bash sees it. These tests are the regression guard for that.
 
 import argparse
 import base64
+import contextlib
+import io
 import os
 import re
 import shlex
@@ -168,3 +170,76 @@ class TestShellQuoting(unittest.TestCase):
         payload = runner.encode_payload(generate(catalog, selection))
         argv = runner.build_oc_args(make_args(since="2h"), payload, oc="oc")
         self.assertEqual(shlex.split(runner.quote_command(argv)), argv)
+
+
+class TestNoiseFilter(unittest.TestCase):
+    """oc's own output is mostly not about the collection.
+
+    Two sources, neither fixable from the must-gather image: the disk-usage
+    line it prints every five seconds, and one line per file as it copies the
+    data out. Samples below are taken verbatim from a real run.
+    """
+
+    NOISE = [
+        "[must-gather-cgn6h] OUT 2026-10-18T01:13:01Z virt_info/crd/plans.forklift.konveyor.io.count",
+        "[must-gather-cgn6h] OUT 2026-10-18T01:13:01Z sent 191,332 bytes  received 14,662,978 bytes",
+        "[must-gather-cgn6h] OUT 2026-10-18T01:13:01Z total size is 144,247,646  speedup is 9.71",
+        "[must-gather-qhdtc] POD 2026-10-18T00:31:18Z volume usage percentage 0",
+        "[must-gather-qhdtc] POD 2026-10-18T00:31:18Z volume percentage checker started.....",
+        "receiving incremental file list",
+    ]
+
+    SIGNAL = [
+        "[must-gather-x] POD 2026-10-18T00:31:53Z   [26/28] ppc        ok   59s",
+        "[must-gather-x] POD 2026-10-18T00:31:53Z   ... 26/28 done; still running: core:groups 1m00s",
+        "[must-gather-x] POD 2026-10-18T00:31:53Z 28 task(s): 17 ok, 10 no-op, 1 failed, in 4m25s",
+        "[must-gather-x] OUT 2026-10-18T00:31:53Z error: something broke",
+        'ClusterVersion: Stable at "4.18.54"',
+        "ClusterID: e13fedd3-e4dc-414e-84a5-2f5ea05b82b9",
+    ]
+
+    def test_noise_is_recognised(self):
+        for line in self.NOISE:
+            with self.subTest(line=line[:60]):
+                self.assertTrue(runner.is_noise(line))
+
+    def test_signal_is_never_hidden(self):
+        for line in self.SIGNAL:
+            with self.subTest(line=line[:60]):
+                self.assertFalse(runner.is_noise(line))
+
+    def test_errors_are_never_hidden(self):
+        # Whatever else gets dropped, anything that looks like a problem has
+        # to reach the user.
+        for line in ("error: x", "Error from server (Forbidden): y",
+                     "[must-gather-x] OUT 2026-01-01T00:00:00Z error: z"):
+            with self.subTest(line=line):
+                self.assertFalse(runner.is_noise(line))
+
+    def test_filtering_keeps_the_unfiltered_stream(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = os.path.join(tmp, "oc-output.log")
+            script = "; ".join(
+                f"echo {shlex.quote(l)}" for l in self.NOISE + self.SIGNAL)
+            with contextlib.redirect_stdout(io.StringIO()) as shown:
+                rc = runner.execute(["bash", "-c", script, "payload"],
+                                    log=io.StringIO(), raw_log_path=raw)
+            self.assertEqual(rc, 0)
+
+            visible = shown.getvalue()
+            for line in self.SIGNAL:
+                self.assertIn(line, visible)
+            for line in self.NOISE:
+                self.assertNotIn(line, visible)
+
+            with open(raw, encoding="utf-8") as fh:
+                kept = fh.read()
+            for line in self.NOISE + self.SIGNAL:
+                self.assertIn(line, kept, "the raw log must lose nothing")
+
+    def test_no_filter_shows_everything(self):
+        script = "echo 'volume usage percentage 0'"
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = runner.execute(["bash", "-c", script, "payload"],
+                                log=io.StringIO(), filter_noise=False)
+        self.assertEqual(rc, 0)

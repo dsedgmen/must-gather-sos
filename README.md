@@ -248,6 +248,33 @@ naive wrapper loses:
 - The pod's working directory is pinned to `/`, because upstream mixes
   `must-gather` and `../must-gather` relative paths that only agree from there.
 
+## oc's own noise
+
+Most of what a must-gather prints is not about the collection. Two sources,
+neither of which the must-gather image can do anything about, because both
+are `oc`'s:
+
+- a disk-usage line every five seconds for the whole run, from a checker oc
+  starts as a sibling process inside the pod;
+- one line per collected file as oc copies the data out — thousands of them
+  on a real cluster, ending in `sent … bytes  received … bytes`.
+
+Both are hidden by default, and the unfiltered stream is written to
+`oc-output.log` in the output directory, so nothing is lost:
+
+```console
+$ must-gather-sos -o core,etcd --since 30m
+  [ 1/3] core:named    ok    9s
+  ...
+(2847 line(s) of oc's disk-usage and file-copy output hidden; full output in
+ must-gather.local.123/oc-output.log; --no-filter shows everything)
+```
+
+The copy listing is silenceable at source — `rsync.RsyncOptions` has a
+`Quiet` field, which is what `oc rsync -q` sets — but `oc adm must-gather`
+never sets it. Until it does, a wrapper is the only layer that can drop
+these, which is rather the point of this one.
+
 ## Output
 
 ```

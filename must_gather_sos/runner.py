@@ -138,17 +138,87 @@ def probe(oc, argv, timeout=30):
     return proc.stdout.strip()
 
 
-def execute(argv, log=None):
-    """Run oc, streaming its output to our own stdout/stderr. Returns the rc."""
+#: Lines oc prints that say nothing about the collection.
+#:
+#: Two sources, neither of which the must-gather image can do anything about:
+#:
+#: * the disk-usage checker oc starts as a sibling process in the pod, which
+#:   prints every five seconds for the whole run;
+#: * the file listing from the rsync oc uses to copy the data out, which is
+#:   one line per collected file -- thousands of them on a real cluster.
+#:
+#: The second is silenceable at source: rsync.RsyncOptions has a Quiet field,
+#: exposed as `oc rsync -q`, that `oc adm must-gather` simply never sets. Until
+#: it does, this is the only layer that can filter them, which is rather the
+#: point of this tool.
+_NOISE = re.compile(
+    r"""(
+        ^\[[^]]*\]\s+POD\s+\S+\s+volume\ (usage\ percentage|percentage\ checker)
+      | ^volume\ (usage\ percentage|percentage\ checker)
+      | ^\[[^]]*\]\s+OUT\s+\S+\s+(sent\ [\d,]+\ bytes|total\ size\ is|receiving\ incremental|\./$|\S+/\S*$)
+      | ^(sent\ [\d,]+\ bytes|total\ size\ is\ |receiving\ incremental\ file\ list)
+    )""",
+    re.VERBOSE,
+)
+
+
+def is_noise(line):
+    """True for a line that carries no information about the collection."""
+    return bool(_NOISE.search(line.rstrip("\n")))
+
+
+def execute(argv, log=None, filter_noise=True, raw_log_path=None):
+    """Run oc, streaming its output. Returns the rc.
+
+    oc's own output is mostly not about the collection: a disk-usage line
+    every five seconds, and one line per file as it copies the data out. By
+    default those are dropped from what you see, and the unfiltered stream is
+    kept in *raw_log_path* so nothing is actually lost.
+    """
     log = log or sys.stderr
     print(f"running: {' '.join(_display(a) for a in argv[:-1])} <payload>", file=log)
+
+    if not filter_noise:
+        try:
+            return subprocess.call(argv)
+        except KeyboardInterrupt:
+            print("\ninterrupted; the must-gather pod may still be running", file=log)
+            return 130
+        except OSError as exc:
+            raise UserError(f"failed to run {argv[0]}: {exc}") from None
+
+    raw = None
+    hidden = 0
     try:
-        return subprocess.call(argv)
+        if raw_log_path:
+            raw = open(raw_log_path, "w", encoding="utf-8", errors="replace")
+        proc = subprocess.Popen(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, errors="replace", bufsize=1,
+        )
+        for line in proc.stdout:
+            if raw:
+                raw.write(line)
+            if is_noise(line):
+                hidden += 1
+                continue
+            sys.stdout.write(line)
+            sys.stdout.flush()
+        rc = proc.wait()
     except KeyboardInterrupt:
         print("\ninterrupted; the must-gather pod may still be running", file=log)
         return 130
     except OSError as exc:
         raise UserError(f"failed to run {argv[0]}: {exc}") from None
+    finally:
+        if raw:
+            raw.close()
+
+    if hidden:
+        where = f"; full output in {raw_log_path}" if raw_log_path else ""
+        print(f"({hidden} line(s) of oc's disk-usage and file-copy output "
+              f"hidden{where}; --no-filter shows everything)", file=log)
+    return rc
 
 
 def _display(arg):

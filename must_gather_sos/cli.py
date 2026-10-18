@@ -112,6 +112,13 @@ def build_parser():
                                 "and ready to paste, and exit")
     behaviour.add_argument("--print-script", action="store_true",
                            help="print only the generated in-pod script and exit")
+    behaviour.add_argument("--no-filter", action="store_true",
+                           help="show oc's output in full. By default the "
+                                "disk-usage line it prints every five seconds "
+                                "and the per-file listing from the copy step "
+                                "are hidden, since neither says anything about "
+                                "the collection; the unfiltered stream is kept "
+                                "in the output directory either way")
     behaviour.add_argument("--batch", action="store_true",
                            help="do not prompt for confirmation")
     behaviour.add_argument("-q", "--quiet", action="store_true")
@@ -374,7 +381,10 @@ def _run(args):
         return 130
 
     started = manifest_mod.utcnow()
-    exit_code = runner.execute(oc_argv)
+    os.makedirs(args.dest_dir, exist_ok=True)
+    raw_log = os.path.join(args.dest_dir, "oc-output.log")
+    exit_code = runner.execute(oc_argv, filter_noise=not args.no_filter,
+                               raw_log_path=raw_log)
     finished = manifest_mod.utcnow()
 
     output_dir = runner.resolve_output_dir(args.dest_dir) or args.dest_dir
