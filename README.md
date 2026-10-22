@@ -1,5 +1,9 @@
 # must-gather-sos
 
+> **Disclaimer:** This is an independent, personal project. It is **not
+> provided, maintained, or supported by Red Hat**, and comes with **no
+> warranty or support** of any kind. Use at your own risk.
+
 An [sos report](https://github.com/sosreport/sos)-style front end for
 [`oc adm must-gather`](https://github.com/openshift/must-gather).
 
