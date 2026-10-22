@@ -20,15 +20,14 @@ rpmbuild_topdir := $(CURDIR)/.rpmbuild
 
 srpm: outdir ?= $(CURDIR)
 srpm:
-	rm -rf $(rpmbuild_topdir)
-	mkdir -p $(rpmbuild_topdir)/SOURCES $(rpmbuild_topdir)/SPECS
-	git archive --format=tar --prefix=$(name)-$(version)/ HEAD \
-		| gzip -n > $(rpmbuild_topdir)/SOURCES/$(tarball)
-	cp $(spec) $(rpmbuild_topdir)/SPECS/$(spec)
+	rm -rf .rpmbuild
+	mkdir -p .rpmbuild/SOURCES .rpmbuild/SPECS
+		tar -czf .rpmbuild/SOURCES/$(NAME)-$(VERSION).tar.gz \
+		--transform 's/^\./$(NAME)-$(VERSION)/' \
+		--exclude='./.git' \
+		--exclude='./.rpmbuild' \
+	cp $(spec) .rpmbuild/SPECS/$(SPEC_BASENAME)
 	rpmbuild -bs \
-		--define "_topdir $(rpmbuild_topdir)" \
-		--define "dist %{nil}" \
-		$(rpmbuild_topdir)/SPECS/$(spec)
-	mkdir -p $(outdir)
-	cp $(rpmbuild_topdir)/SRPMS/*.src.rpm $(outdir)/
-	rm -rf $(rpmbuild_topdir)
+		--define "_topdir $(shell pwd)/.rpmbuild" \
+		--define "_srcrpmdir $(outdir)" \
+		.rpmbuild/SPECS/$(SPEC_BASENAME)
