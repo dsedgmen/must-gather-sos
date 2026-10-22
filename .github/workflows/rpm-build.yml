@@ -39,14 +39,19 @@ jobs:
         include:
           - target: fedora-43
             image: fedora:43
+            enable_repo: ""
           - target: fedora-44
             image: fedora:44
+            enable_repo: ""
           - target: fedora-45
             image: fedora:45
+            enable_repo: ""
           - target: el9 # RHEL 9 / CentOS Stream 9
             image: quay.io/centos/centos:stream9
+            enable_repo: crb
           - target: el10 # RHEL 10 / CentOS Stream 10
             image: quay.io/centos/centos:stream10
+            enable_repo: crb
     container:
       image: ${{ matrix.image }}
     steps:
@@ -57,6 +62,10 @@ jobs:
 
       - name: Install build dependencies
         run: dnf install -y rpm-build dnf-plugins-core
+
+      - name: Enable CRB (pyproject-rpm-macros, python3-wheel live there on EL)
+        if: matrix.enable_repo != ''
+        run: dnf config-manager --set-enabled ${{ matrix.enable_repo }}
 
       - name: Resolve BuildRequires
         run: dnf builddep -y srpm-out/*.src.rpm
