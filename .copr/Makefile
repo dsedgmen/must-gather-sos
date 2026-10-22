@@ -19,15 +19,15 @@ rpmbuild_topdir := $(CURDIR)/.rpmbuild
 .PHONY: srpm
 
 srpm: outdir ?= $(CURDIR)
-srpm:
+srpm
 	rm -rf .rpmbuild
 	mkdir -p .rpmbuild/SOURCES .rpmbuild/SPECS
-		tar -czf .rpmbuild/SOURCES/$(NAME)-$(VERSION).tar.gz \
+	tar -czf .rpmbuild/SOURCES/$(NAME)-$(VERSION).tar.gz \
 		--transform 's/^\./$(NAME)-$(VERSION)/' \
 		--exclude='./.git' \
 		--exclude='./.rpmbuild' \
-	cp $(spec) .rpmbuild/SPECS/$(SPEC_BASENAME)
+	cp $(spec) .rpmbuild/SPECS/$(notdir $(spec))
 	rpmbuild -bs \
 		--define "_topdir $(shell pwd)/.rpmbuild" \
 		--define "_srcrpmdir $(outdir)" \
-		.rpmbuild/SPECS/$(SPEC_BASENAME)
+		.rpmbuild/SPECS/$(notdir $(spec))
