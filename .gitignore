@@ -5,6 +5,8 @@ build/
 dist/
 .venv/
 venv/
+.rpmbuild/
+*.src.rpm
 
 # must-gather output
 must-gather.local.*/

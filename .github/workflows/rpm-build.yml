@@ -1,0 +1,75 @@
+name: RPM build
+
+# Sanity-checks packaging on every push/PR by building the SRPM and
+# rebuilding it into a binary RPM on each of the target distros. The actual
+# COPR project is driven independently by COPR's "Build from SCM" webhook
+# (see .copr/Makefile), using these same chroots:
+#   fedora-43-x86_64, fedora-44-x86_64, fedora-45-x86_64,
+#   epel-9-x86_64  (covers RHEL 9 and CentOS Stream 9),
+#   epel-10-x86_64 (covers RHEL 10 and CentOS Stream 10)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  srpm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install rpmbuild
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Build source RPM
+        run: make -f .copr/Makefile srpm outdir=srpm-out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: srpm
+          path: srpm-out/*.src.rpm
+
+  rpm:
+    needs: srpm
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: fedora-43
+            image: fedora:43
+          - target: fedora-44
+            image: fedora:44
+          - target: fedora-45
+            image: fedora:45
+          - target: el9 # RHEL 9 / CentOS Stream 9
+            image: quay.io/centos/centos:stream9
+          - target: el10 # RHEL 10 / CentOS Stream 10
+            image: quay.io/centos/centos:stream10
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: srpm
+          path: srpm-out
+
+      - name: Install build dependencies
+        run: dnf install -y rpm-build dnf-plugins-core
+
+      - name: Resolve BuildRequires
+        run: dnf builddep -y srpm-out/*.src.rpm
+
+      - name: Build binary RPM
+        run: |
+          mkdir -p rpm-out
+          rpmbuild --rebuild \
+            --define "_rpmdir $PWD/rpm-out" \
+            --define "_srcrpmdir $PWD/srpm-out" \
+            srpm-out/*.src.rpm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.target }}
+          path: rpm-out/**/*.rpm
