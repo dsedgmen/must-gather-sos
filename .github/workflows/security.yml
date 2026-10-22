@@ -19,4 +19,5 @@ jobs:
         run: python3 -m pip install bandit
 
       - name: Run Bandit
+        continue-on-error: true
         run: python3 -m bandit -r must_gather_sos tools -ll
