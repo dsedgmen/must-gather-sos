@@ -19,7 +19,7 @@ rpmbuild_topdir := $(CURDIR)/.rpmbuild
 .PHONY: srpm
 
 srpm: outdir ?= $(CURDIR)
-srpm
+srpm:
 	rm -rf .rpmbuild
 	mkdir -p .rpmbuild/SOURCES .rpmbuild/SPECS
 	tar -czf .rpmbuild/SOURCES/$(NAME)-$(VERSION).tar.gz \
