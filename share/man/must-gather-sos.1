@@ -42,8 +42,37 @@ stands for the base
 pass that upstream performs inline; it is enabled by default, and
 .B \-o
 selections that omit it get no base inspect at all.
+.PP
+The run is also given the shape
+.BR sos-report (1)
+has: the plan is announced before anything starts, each task reports
+.I [n/total]
+as it finishes, its own output goes to
+.I <output>/task\-logs/<name>.log
+rather than into the shared stream, and a summary at the end separates what
+collected something
+.RB ( ok )
+from what ran cleanly with nothing to collect
+.RB ( no-op ),
+what exited non\-zero
+.RB ( failed ),
+and what the image does not carry at all
+.RB ( missing ,
+meaning the catalog and the image are from different releases). Every
+.B TASK_HEARTBEAT
+seconds \(em set in the generated script, 30 by default, 0 to disable \(em the
+run says what is still going, so a slow plugin does not read as a hang.
+.B \-\-print\-script
+shows the value, and the script it prints can be edited and run with the
+command
+.B \-\-print\-command
+gives you.
 .SH OPTIONS
 .SS Plugin selection
+.TP
+.B \-\-list\-catalogs
+List the built-in plugin catalogs, how many plugins each has, and the image
+references each describes, then exit.
 .TP
 .BR \-l ", " \-\-list\-plugins
 List the available plugins, which are on by default, and what options each
@@ -89,6 +118,16 @@ Mutually exclusive with \fB\-\-since\fR.
 .B \-\-reduce\-logs " \fILIST\fR"
 Comma separated, any of \fBskip_rotated_logs\fR, \fBcompress_service_logs\fR,
 \fBcompress_logs\fR. Exported as \fBREDUCE_LOGS\fR for \fBcommon.sh\fR.
+.TP
+.B \-\-jobs " \fIN\fR"
+Most collection scripts to run at once inside the pod, the way
+.BR sos-report (1)
+uses \fB\-\-threads\fR. \fB0\fR, the default, is unlimited \(em what
+upstream's \fBgather\fR does. Use it when a cluster cannot take two dozen
+\fBoc adm inspect\fR calls arriving together. Written into the generated
+script as \fBTASK_JOBS\fR, so \fB\-\-print\-script\fR shows it; a task
+waiting for a slot has not started, and so is neither reported as running
+nor charged for the wait.
 .SS Output
 .TP
 .B \-\-dest\-dir " \fIDIR\fR"
@@ -133,11 +172,48 @@ Print only the generated in\-pod script, then exit. Needs no cluster.
 .B \-\-batch
 Do not prompt for confirmation.
 .TP
-.B \-\-catalog " \fIPATH\fR"
-Use an alternative plugin catalog instead of the vendored one.
+.B \-\-catalog " [\fIIMAGE\fR=]\fINAME\fR|\fIPATH\fR"
+Use a different plugin catalog: a built-in name (see
+\fB\-\-list\-catalogs\fR) or a path to one of your own. With several
+images, prefix it with the image it describes. Repeatable.
 .TP
 .B \-\-oc " \fIPATH\fR"
 Path to the \fBoc\fR binary.
+.SH SEVERAL IMAGES
+.B \-\-image
+is repeatable, as it is for
+.BR "oc adm must-gather" .
+Each image needs a catalog, chosen by matching the image reference against
+the patterns in
+.BR \-\-list\-catalogs ;
+pin one explicitly with \fB\-\-catalog IMAGE=NAME\fR. Plugin selection
+(\fB\-o\fR, \fB\-n\fR, \fB\-e\fR, \fB\-k\fR) is global: a name must exist in
+some selected catalog, and does not apply to the images that lack it. An
+image left with nothing selected is dropped from the run.
+.PP
+It is still one
+.B oc
+invocation.
+.B oc
+joins everything after \fB\-\-\fR into a single string and gives that same
+string to every image's pod, so the generated script carries a branch per
+image family and detects at run time which one it is in \(em
+\fB\-\-print\-script\fR shows the whole thing. Each pod writes a
+\fBmust\-gather\-sos\-profile\fR file naming the branch it took, because
+\fBoc\fR names its output directories after the resolved image digest, which
+cannot be known in advance. An image no catalog recognises runs its own
+entrypoint, which is what plain \fBoc adm must-gather\fR would have done.
+.PP
+Two pods' progress lines interleave in the live stream; \fBoc\fR prefixes
+each with the pod name, and every pod still writes its own
+\fBgather\-progress.log\fR and \fBtask\-logs/\fR.
+.PP
+Red Hat ACM is supported through the \fBacm\fR catalog. Note that
+\fB\-\-since\fR and \fB\-\-reduce\-logs\fR do nothing against it: the ACM
+image has no \fBcommon.sh\fR and never reads \fBMUST_GATHER_SINCE\fR, which
+\fBmust-gather-sos\fR says once rather than per plugin. ACS is not
+supported; there is no official ACS must-gather image, and the documented
+route is \fBroxctl central debug download\-diagnostics\fR.
 .SH THE REACH OF \-\-SINCE
 \fB\-\-since\fR and \fB\-\-since\-time\fR change what is collected in exactly
 two places. This is an upstream limitation, not one this tool adds.
@@ -215,15 +291,30 @@ A bundle to attach to a support case:
 The vendored plugin catalog, generated from openshift/must\-gather by
 \fBtools/sync_catalog.py\fR.
 .TP
+.I must_gather_sos/data/task_common.sh
+The sos\-style progress library, inlined into the generated script because
+the image has no copy of it.
+.TP
 .I <output>/manifest.json
-What ran, with what options, against which cluster, and each plugin's exit
-status and duration.
+What ran, with what options, against which cluster, and each plugin's state,
+exit status and duration, with a tally by state.
 .TP
 .I <output>/must-gather-sos-script.sh
 A copy of the script that ran inside the pod.
 .TP
+.I <output>/must-gather-sos-profile
+Which image family wrote this directory, when a run covered several.
+.TP
 .I <output>/must-gather-sos-plugins.log
-Raw per\-plugin results written in the pod: name, exit code, seconds.
+Raw per\-plugin results written in the pod, tab separated: name, state, exit
+code, seconds, detail.
+.TP
+.I <output>/gather-progress.log
+The progress as it was printed, without \fBoc\fR's disk\-usage checker
+interleaved through it.
+.TP
+.I <output>/task-logs/<name>.log
+Everything one task printed, kept out of the shared stream.
 .SH EXIT STATUS
 .TP
 .B 0

@@ -31,4 +31,7 @@ Homepage = "https://github.com/dsedgmen/must-gather-sos"
 include = ["must_gather_sos*"]
 
 [tool.setuptools.package-data]
-must_gather_sos = ["data/*.json"]
+# The .sh is the sos-style progress library, read at generate time and
+# inlined into the script sent to the pod; without it nothing can be
+# generated, so it has to be installed, not just present in the checkout.
+must_gather_sos = ["data/*.json", "data/*.sh"]

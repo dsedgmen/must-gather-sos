@@ -24,11 +24,13 @@ lint:
 	$(PYTHON) -m compileall -q must_gather_sos tools tests
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck -s bash share/completion/must-gather-sos.bash; \
+		shellcheck -s bash must_gather_sos/data/task_common.sh; \
 		for f in tests/data/golden/*.sh; do shellcheck -s bash "$$f" || exit 1; done; \
 		echo "shellcheck: clean"; \
 	else \
 		echo "shellcheck not installed, skipping"; \
 	fi
+	@bash -n must_gather_sos/data/task_common.sh
 	@for f in tests/data/golden/*.sh; do bash -n "$$f" || exit 1; done
 	@echo "bash -n: clean"
 

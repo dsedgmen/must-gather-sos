@@ -14,22 +14,28 @@ import subprocess
 import tempfile
 import unittest
 
-from must_gather_sos import script
+from must_gather_sos import manifest, script
 from must_gather_sos.catalog import Catalog, build_selection
 
 GOLDEN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "golden")
 UPDATE = os.environ.get("MGS_UPDATE_GOLDEN") == "1"
 
-# Cases are (golden filename, build_selection kwargs, reduce_logs).
+# Cases are (golden filename, catalog, build_selection kwargs, reduce_logs,
+# jobs). The catalog is a registry name, so a case can cover another product.
 CASES = [
-    ("core-only.sh", {"only": "core"}, None),
-    ("defaults.sh", {}, None),
-    ("skip-two.sh", {"skip": "monitoring,istio"}, None),
-    ("audit-forced.sh",
-     {"only": "audit_logs", "raw_options": ["audit_logs.force=on"]}, None),
-    ("no-core.sh", {"only": "etcd,ppc,aro"}, None),
-    ("reduce-logs.sh", {"only": "core,service_logs"}, ["compress_logs",
-                                                       "skip_rotated_logs"]),
+    ("core-only.sh", "openshift", {"only": "core"}, None, 0),
+    ("defaults.sh", "openshift", {}, None, 0),
+    ("skip-two.sh", "openshift", {"skip": "monitoring,istio"}, None, 0),
+    ("audit-forced.sh", "openshift",
+     {"only": "audit_logs", "raw_options": ["audit_logs.force=on"]}, None, 0),
+    ("no-core.sh", "openshift", {"only": "etcd,ppc,aro"}, None, 0),
+    ("reduce-logs.sh", "openshift", {"only": "core,service_logs"},
+     ["compress_logs", "skip_rotated_logs"], 0),
+    ("jobs-capped.sh", "openshift", {"skip": "monitoring"}, None, 4),
+    ("acm-defaults.sh", "acm", {}, None, 0),
+    ("acm-hostedcluster.sh", "acm",
+     {"only": "hostedcluster", "raw_options": ["hostedcluster.name=hc1"]},
+     None, 0),
 ]
 
 
@@ -48,17 +54,23 @@ class ScriptTestCase(unittest.TestCase):
     def setUpClass(cls):
         cls.catalog = Catalog.load()
 
-    def generate(self, reduce_logs=None, **kwargs):
-        selection = build_selection(self.catalog, **kwargs)
-        return script.generate(self.catalog, selection, reduce_logs=reduce_logs)
+    def generate(self, reduce_logs=None, jobs=0, catalog=None, **kwargs):
+        catalog = catalog or self.catalog
+        selection = build_selection(catalog, **kwargs)
+        return script.generate(catalog, selection,
+                               reduce_logs=reduce_logs, jobs=jobs)
+
+    def for_case(self, cat, kwargs, reduce_logs, jobs):
+        return self.generate(catalog=Catalog.load(cat), reduce_logs=reduce_logs,
+                             jobs=jobs, **kwargs)
 
 
 class TestGolden(ScriptTestCase):
     def test_golden_files(self):
         os.makedirs(GOLDEN_DIR, exist_ok=True)
-        for name, kwargs, reduce_logs in CASES:
+        for name, cat, kwargs, reduce_logs, jobs in CASES:
             with self.subTest(case=name):
-                produced = normalise(self.generate(reduce_logs=reduce_logs, **kwargs))
+                produced = normalise(self.for_case(cat, kwargs, reduce_logs, jobs))
                 path = os.path.join(GOLDEN_DIR, name)
                 if UPDATE:
                     with open(path, "w", encoding="utf-8") as fh:
@@ -77,8 +89,8 @@ class TestGolden(ScriptTestCase):
 
 class TestSyntax(ScriptTestCase):
     def _all_scripts(self):
-        for name, kwargs, reduce_logs in CASES:
-            yield name, self.generate(reduce_logs=reduce_logs, **kwargs)
+        for name, cat, kwargs, reduce_logs, jobs in CASES:
+            yield name, self.for_case(cat, kwargs, reduce_logs, jobs)
 
     def test_bash_parses_every_case(self):
         bash = shutil.which("bash")
@@ -108,19 +120,27 @@ class TestSyntax(ScriptTestCase):
 
 
 class TestContent(ScriptTestCase):
-    def test_since_plumbing_is_always_present(self):
-        # This is what makes oc's MUST_GATHER_SINCE reach the collection.
-        for name, kwargs, reduce_logs in CASES:
+    def test_since_plumbing_is_present_wherever_the_image_has_it(self):
+        # Sourcing common.sh is what makes oc's MUST_GATHER_SINCE reach the
+        # collection. An image without one (ACM) must not pretend to have it.
+        for name, cat, kwargs, reduce_logs, jobs in CASES:
             with self.subTest(case=name):
-                text = self.generate(reduce_logs=reduce_logs, **kwargs)
-                self.assertIn("source /usr/bin/common.sh", text)
-                self.assertIn("get_log_collection_args", text)
+                text = self.for_case(cat, kwargs, reduce_logs, jobs)
+                if Catalog.load(cat).profile.since:
+                    self.assertIn("source /usr/bin/common.sh", text)
+                    self.assertIn("get_log_collection_args", text)
+                else:
+                    self.assertNotIn("/usr/bin/common.sh", text)
 
     def test_core_section_only_when_core_selected(self):
         with_core = self.generate(only="core,etcd")
         without_core = self.generate(only="etcd")
-        self.assertIn("oc adm inspect", with_core)
-        self.assertNotIn("oc adm inspect", without_core)
+        # Matched on the invocation, not the bare words: the task library's
+        # summary explains that 'oc adm inspect' exits 1 on absent optional
+        # resources, so the phrase alone is in every script.
+        inspect = "oc adm inspect ${log_collection_args}"
+        self.assertIn(inspect, with_core)
+        self.assertNotIn(inspect, without_core)
         self.assertIn("named_resources=(", with_core)
         self.assertNotIn("named_resources=(", without_core)
 
@@ -131,14 +151,16 @@ class TestContent(ScriptTestCase):
 
     def test_post_phase_runs_after_wait(self):
         text = self.generate(only="etcd,aro")
-        self.assertLess(text.index('wait "${pids[@]}"'),
+        self.assertLess(text.index("\ntask_wait\n"),
                         text.index("/usr/bin/gather_aro"))
 
     def test_parallel_plugins_are_backgrounded_and_waited_on(self):
+        # task_run does the backgrounding, so there is no trailing '&' and no
+        # pid bookkeeping in the generated script any more.
         text = self.generate(only="etcd,sriov")
-        self.assertIn("/usr/bin/gather_etcd &", text)
-        self.assertIn("/usr/bin/gather_sriov &", text)
-        self.assertEqual(text.count("pids+=($!)"), 2)
+        self.assertIn("task_run etcd /usr/bin/gather_etcd\n", text)
+        self.assertIn("task_run sriov /usr/bin/gather_sriov\n", text)
+        self.assertIn("\ntask_wait\n", text)
 
     def test_reduce_logs_exported_before_common_sh(self):
         text = self.generate(only="core", reduce_logs=["compress_logs"])
@@ -157,21 +179,134 @@ class TestContent(ScriptTestCase):
         # shell would act on left bare.
         self.assertEqual(
             line,
-            "run_plugin metrics /usr/bin/gather_metrics "
-            + shlex.quote(f"--match={hostile}")
-            + " &",
+            "task_run metrics /usr/bin/gather_metrics "
+            + shlex.quote(f"--match={hostile}"),
         )
         self.assertEqual(shlex.split(line)[3], f"--match={hostile}")
 
-    def test_plugin_log_is_initialised_and_appended(self):
+    def test_plugin_log_is_where_the_manifest_will_look(self):
         text = self.generate(only="etcd")
-        self.assertIn(f": >{script.PLUGIN_LOG}", text)
-        self.assertIn(f">>{script.PLUGIN_LOG}", text)
+        base = Catalog.load("openshift").profile.base_path
+        self.assertIn(f"task_rebase {base}", text)
+        self.assertEqual(os.path.basename(script.PLUGIN_LOG),
+                         manifest.PLUGIN_LOG_NAME)
 
     def test_working_directory_is_pinned(self):
         # Upstream mixes 'must-gather' and '../must-gather'; both only resolve
         # to /must-gather from /.
         self.assertIn("cd / || exit 1", self.generate(only="core"))
+
+
+class TestProgress(ScriptTestCase):
+    """The sos-style plan, progress and summary, ported from better-gather.
+
+    Matching is line-anchored throughout: the inlined library defines
+    ``task_plan``, ``task_run`` and ``task_summary`` and talks about them in
+    its comments, so a substring search finds the library, not the call.
+    """
+
+    @staticmethod
+    def plan_line(text):
+        return next(ln for ln in text.splitlines() if ln.startswith("task_plan "))
+
+    @staticmethod
+    def run_lines(text):
+        # Tab-stripped: the compress task sits inside an 'if' and so is
+        # indented, but it is still a task the plan has to account for.
+        return [ln.lstrip("\t") for ln in text.splitlines()
+                if ln.lstrip("\t").startswith("task_run ")]
+
+    @staticmethod
+    def line_of(text, prefix):
+        """The index of the first line starting with *prefix*, tabs stripped."""
+        return next(i for i, ln in enumerate(text.splitlines())
+                    if ln.lstrip("\t").startswith(prefix))
+
+    @staticmethod
+    def last_line_of(text, prefix):
+        return max(i for i, ln in enumerate(text.splitlines())
+                   if ln.lstrip("\t").startswith(prefix))
+
+    def test_the_library_is_inlined_because_the_image_has_no_copy(self):
+        text = self.generate(only="etcd")
+        self.assertIn("task_plan() {", text)
+        self.assertIn("task_summary() {", text)
+        self.assertNotIn("source /usr/bin/task_common.sh", text)
+
+    def test_the_python_side_and_the_library_agree_on_the_paths(self):
+        # Both name these: the library builds them, cli.py points at them
+        # afterwards. A silent disagreement would send people to a directory
+        # that is not there.
+        with open(script.TASK_LIB, encoding="utf-8") as fh:
+            library = fh.read()
+        for name in (script.TASK_LOG_DIR_NAME, script.PROGRESS_LOG_NAME):
+            self.assertIn('"${TASK_BASE_PATH}/' + name + '"', library,
+                          f"{name} is not what the library builds")
+
+    def test_the_library_comes_before_the_image_setup(self):
+        # It has to: with several images the script sources the library once
+        # and then picks an image's settings in a branch, so the setup calls
+        # task_rebase, which the library must already have defined.
+        text = self.generate(only="etcd")
+        self.assertLess(text.index("task_rebase() {"),
+                        text.index("source /usr/bin/common.sh"))
+        self.assertLess(text.index("task_rebase() {"),
+                        text.index("\ntask_rebase /must-gather\n"))
+
+    def test_the_plan_is_announced_before_anything_runs(self):
+        text = self.generate(only="core,etcd")
+        self.assertLess(self.line_of(text, "task_plan "),
+                        self.line_of(text, "task_run "))
+
+    def test_the_plan_names_every_task_that_will_run(self):
+        selection = build_selection(self.catalog, only="core,etcd,aro")
+        text = script.generate(self.catalog, selection)
+        self.assertEqual(
+            shlex.split(self.plan_line(text))[1:],
+            ["core:named", "core:groups", "core:all-namespaces", "etcd", "aro"],
+        )
+
+    def test_the_plan_matches_the_task_run_calls(self):
+        # A disagreement is what task_summary's drift warning catches, so it
+        # should never be the generator that causes one.
+        for name, cat, kwargs, reduce_logs, jobs in CASES:
+            with self.subTest(case=name):
+                text = self.for_case(cat, kwargs, reduce_logs, jobs)
+                invoked = [shlex.split(ln)[1] for ln in self.run_lines(text)]
+                self.assertEqual(sorted(shlex.split(self.plan_line(text))[1:]),
+                                 sorted(invoked))
+
+    def test_compress_joins_the_plan_only_when_asked_for(self):
+        with_compress = self.generate(only="core", reduce_logs=["compress_logs"])
+        without = self.generate(only="core", reduce_logs=["skip_rotated_logs"])
+        self.assertIn("compress", shlex.split(self.plan_line(with_compress)))
+        self.assertNotIn("compress", shlex.split(self.plan_line(without)))
+
+    def test_compression_is_a_task_not_silence_after_the_summary(self):
+        text = self.generate(only="core", reduce_logs=["compress_logs"])
+        self.assertIn("\ttask_run compress compress_logs\n", text)
+        self.assertLess(self.line_of(text, "task_run compress"),
+                        self.line_of(text, "task_summary || true"))
+
+    def test_no_dead_compress_call_when_it_was_not_asked_for(self):
+        # The plan and the task_run calls have to agree, and a compress call
+        # behind a runtime 'if' that is never true would be a standing drift
+        # warning waiting to happen.
+        self.assertNotIn("task_run compress", self.generate(only="core"))
+
+    def test_the_jobs_cap_is_written_into_the_script(self):
+        # There is no flag that reaches the pod, so the value has to be
+        # visible in --print-script and editable there.
+        self.assertIn("\nTASK_JOBS=0\n", self.generate(only="core"))
+        self.assertIn("\nTASK_JOBS=4\n", self.generate(only="core", jobs=4))
+
+    def test_the_summary_is_last_and_does_not_fail_the_run(self):
+        for reduce_logs in (None, ["compress_logs"]):
+            with self.subTest(reduce_logs=reduce_logs):
+                text = self.generate(only="core,etcd", reduce_logs=reduce_logs)
+                summary = self.line_of(text, "task_summary || true")
+                self.assertLess(summary, self.line_of(text, "sync"))
+                self.assertGreater(summary, self.last_line_of(text, "task_run "))
 
 
 if __name__ == "__main__":
