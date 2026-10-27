@@ -9,6 +9,450 @@
 # must-gather image provides; cd here makes that explicit rather than assumed.
 cd / || exit 1
 
+# --- sos-style progress (must_gather_sos/data/task_common.sh, inlined) ---
+#
+# Readable progress for a parallel gather, in the style of `sos report`.
+#
+# Ported from better-gather's collection-scripts/task_common.sh. Kept
+# function-for-function identical to that file so the two can be resynced;
+# see the DIVERGENCE notes below for the handful of deliberate differences.
+#
+# A must-gather run launches a couple of dozen collection scripts at once and
+# lets their output interleave straight into the pod's stdout. The result is
+# thousands of lines in no particular order, with no way to tell how far
+# along the run is, which scripts have finished, or which did anything at
+# all. Support cases routinely arrive with a log nobody has read.
+#
+# This gives the run the shape sos has had for years:
+#
+#   * the plan is printed before anything starts, so you know what is coming;
+#   * each task reports [n/total] as it finishes, so progress is visible;
+#   * each task's own output goes to its own file rather than into the
+#     common stream;
+#   * a summary at the end says what succeeded, what collected nothing, and
+#     what failed.
+#
+# must-gather-sos inlines this into the script it sends to the pod -- the
+# image has no copy of it -- so it must stay self-contained.
+#
+# Usage:
+#
+#   source task_common.sh
+#   task_plan etcd monitoring olm          # announce, sets the total
+#   task_run etcd /usr/bin/gather_etcd     # backgrounds it
+#   task_run monitoring /usr/bin/gather_monitoring
+#   task_wait                              # wait for all of them
+#   task_summary                           # print the table, set the rc
+
+# Point the library at a collection directory, deriving everything under it.
+#
+# A function rather than a run of assignments because the base is not always
+# known when this file is sourced: must-gather-sos sends one script to
+# several images at once, sources this once, and picks the image's settings
+# in a branch afterwards.
+#
+#   TASK_RESULTS  -- DIVERGENCE from better-gather: must-gather-sos's own
+#                    plugin log rather than a separate task-results.tsv,
+#                    because that is the file manifest.json is built from
+#                    once the data has been copied out. Same five-column TSV.
+#   TASK_STARTED  -- DIVERGENCE: hidden, since it is scratch and would
+#                    otherwise sit in the archive next to the data.
+#   TASK_PROGRESS_LOG -- a clean copy of the progress, without oc's
+#                    disk-usage checker interleaved into it. oc starts that
+#                    checker as a sibling process writing to the same
+#                    container stdout every five seconds, so the live stream
+#                    cannot be cleaned up from in here -- but the archive
+#                    can have a readable record.
+task_rebase() {
+	TASK_BASE_PATH="${1:-${TASK_BASE_PATH}}"
+	TASK_LOG_DIR="${TASK_BASE_PATH}/task-logs"
+	TASK_RESULTS="${TASK_BASE_PATH}/must-gather-sos-plugins.log"
+	TASK_STARTED="${TASK_BASE_PATH}/.task-started.tsv"
+	TASK_PROGRESS_LOG="${TASK_BASE_PATH}/gather-progress.log"
+	TASK_STOP="${TASK_BASE_PATH}/.task-stop"
+}
+
+task_rebase "${TASK_BASE_PATH:-${BASE_COLLECTION_PATH:-/must-gather}}"
+
+# How often to say what is still running, in seconds. During a long task
+# there is otherwise nothing but the checker's output for minutes at a time,
+# which reads as though the gather has hung.
+TASK_HEARTBEAT="${TASK_HEARTBEAT:-30}"
+
+# Most tasks to run at once. 0 is unlimited, which is what upstream's gather
+# does and remains the default. A cap is the in-pod equivalent of
+# `sos report --threads`: it bounds the load a collection puts on the API
+# server, for a cluster that cannot take two dozen inspects at once.
+TASK_JOBS="${TASK_JOBS:-0}"
+
+# How often the cap checks whether a slot has freed up. Short enough not to
+# add measurable latency per task, long enough not to spin.
+TASK_POLL_INTERVAL="${TASK_POLL_INTERVAL:-0.2}"
+
+# Patterns a collection script uses to say "the thing I collect is not here".
+# Matching one of these with a zero exit means the task ran fine and had
+# nothing to do, which is worth distinguishing from actually collecting
+# something -- most of a default gather is no-ops on any given cluster.
+TASK_NOOP_PATTERN="${TASK_NOOP_PATTERN:-not detected|not installed|[Ss]kipping|not found|no such|is not present|No resources found}"
+
+task_pids=()
+task_total=0
+task_started_at=0
+task_heartbeat_pid=""
+
+# Announce what is about to run. Everything after this is one of these names.
+task_plan() {
+	task_total=$#
+	task_started_at="$(date -u +%s)"
+
+	mkdir -p "${TASK_LOG_DIR}"
+	: >"${TASK_RESULTS}"
+	: >"${TASK_STARTED}"
+	: >"${TASK_PROGRESS_LOG}"
+	rm -f "${TASK_STOP}"
+
+	echo
+	if [ "${TASK_JOBS}" -gt 0 ]; then
+		echo "Collecting with ${task_total} task(s), ${TASK_JOBS} at a time."
+	else
+		echo "Collecting with ${task_total} task(s)."
+	fi
+	# Wrap the names rather than printing one per line: two dozen names fit
+	# in a few lines and are easier to scan as a block.
+	printf '%s\n' "$@" | sort | paste -sd' ' - | fold -s -w 76 |
+		sed 's/^/  /'
+	echo
+	echo "Per-task output goes to ${TASK_LOG_DIR}/, not into this log."
+	echo
+}
+
+# Run one task in the background, recording how it went.
+#
+#   task_run <name> <command> [args...]
+#
+# Blocks first when TASK_JOBS caps how many may run at once, so with a cap
+# this does not return until there is a slot.
+task_run() {
+	local name="$1"
+	shift
+	_task_heartbeat_start
+	_task_slot
+	_task_exec "${name}" "$@" &
+	task_pids+=($!)
+}
+
+# Block until fewer than TASK_JOBS tasks are running.
+#
+# Deliberately before the `&` in task_run: a queued task must not reach
+# _task_exec, which is what appends to TASK_STARTED and samples the clock.
+# Gating after the fork would make the heartbeat report queued tasks as
+# running, and would charge each task's elapsed time with the time it spent
+# waiting for a slot.
+_task_slot() {
+	[ "${TASK_JOBS}" -gt 0 ] || return 0
+	while :; do
+		_task_reap
+		[ "${#task_pids[@]}" -ge "${TASK_JOBS}" ] || return 0
+		sleep "${TASK_POLL_INTERVAL}"
+	done
+}
+
+# Drop finished tasks from task_pids, so its length is the number running.
+#
+# Liveness is asked of the kernel rather than inferred from TASK_RESULTS: a
+# task the OOM killer takes never records a result, and a gate that counted
+# results would wait for it forever. The cost is that a pid reused between a
+# task dying and the next poll holds its slot until that process exits --
+# vanishingly unlikely in a short-lived container, and the worst case is one
+# idle slot, never a lost or duplicated result.
+_task_reap() {
+	local pid
+	local live=()
+
+	[ "${#task_pids[@]}" -gt 0 ] || return 0
+	for pid in "${task_pids[@]}"; do
+		if kill -0 "${pid}" 2>/dev/null; then
+			live+=("${pid}")
+		fi
+	done
+	task_pids=("${live[@]}")
+}
+
+_task_exec() {
+	local name="$1"
+	shift
+	local log="${TASK_LOG_DIR}/${name//\//_}.log"
+	local start rc elapsed state detail=""
+
+	start="$(date -u +%s)"
+	printf '%s\t%s\n' "${name}" "${start}" >>"${TASK_STARTED}" 2>/dev/null || true
+	"$@" >"${log}" 2>&1
+	rc=$?
+	elapsed=$(($(date -u +%s) - start))
+
+	if [ "${rc}" -eq 127 ]; then
+		# The script is not in this image at all. That is not a collection
+		# failure -- it happens when the catalog describes a newer image
+		# than the one actually running -- so say so rather than reporting
+		# it as broken.
+		state="missing"
+		detail="not present in this image"
+	elif [ "${rc}" -ne 0 ]; then
+		state="failed"
+		detail="rc=${rc}"
+	elif [ ! -s "${log}" ] || grep -Eqi "${TASK_NOOP_PATTERN}" "${log}"; then
+		state="no-op"
+		detail="$(grep -Eoim1 "${TASK_NOOP_PATTERN}[^.]*" "${log}" 2>/dev/null | head -1)"
+		[ -n "${detail}" ] || detail="produced no output"
+	else
+		state="ok"
+	fi
+
+	_task_record "${name}" "${state}" "${rc}" "${elapsed}" "${detail}"
+}
+
+# Append one result and print progress.
+#
+# Serialised with flock where it works, so that two tasks finishing at the
+# same moment cannot both claim the same position in the count. flock is in
+# util-linux and is present in the must-gather image, but this does not
+# depend on that: if it is missing, or if the call itself fails, the record
+# is written directly instead.
+#
+# Whether the record landed is checked by looking for it, not by trusting
+# flock's exit status. Losing a result silently would be much worse than a
+# duplicated number in the progress column -- the summary would under-count,
+# the drift warning would fire for the wrong reason, and manifest.json would
+# be missing a plugin that did in fact run.
+_task_record() {
+	local name="$1" state="$2" rc="$3" elapsed="$4" detail="$5"
+
+	if command -v flock >/dev/null 2>&1; then
+		flock "${TASK_RESULTS}" bash -c \
+			"$(declare -f _task_emit); _task_emit \"\$@\"" _ \
+			"${TASK_RESULTS}" "${task_total}" "${name}" "${state}" \
+			"${rc}" "${elapsed}" "${detail}" 2>/dev/null || true
+	fi
+
+	if ! grep -qF "${name}"$'\t' "${TASK_RESULTS}" 2>/dev/null; then
+		_task_emit "${TASK_RESULTS}" "${task_total}" "${name}" "${state}" \
+			"${rc}" "${elapsed}" "${detail}"
+	fi
+}
+
+_task_emit() {
+	local results="$1" total="$2" name="$3" state="$4" rc="$5" elapsed="$6" detail="$7"
+	local position width line
+
+	printf '%s\t%s\t%s\t%s\t%s\n' \
+		"${name}" "${state}" "${rc}" "${elapsed}" "${detail}" >>"${results}"
+
+	position="$(wc -l <"${results}" | tr -d '[:space:]')"
+	width="${#total}"
+	line="$(printf '  [%*d/%d] %-42s %-7s %5ds' \
+		"${width}" "${position}" "${total}" "${name}" "${state}" "${elapsed}")"
+	printf '%s\n' "${line}"
+	printf '%s\n' "${line}" >>"${TASK_PROGRESS_LOG}" 2>/dev/null || true
+}
+
+# Say what is still running and for how long.
+#
+# Without this a slow task leaves minutes of dead air, filled only by oc's
+# disk-usage checker, and the run looks hung. This is the equivalent of the
+# "[Running: ...]" column sos keeps on screen.
+# Sleeps in one-second steps rather than one long one. Killing the loop does
+# not kill a `sleep` it is blocked in, and that orphan keeps the container's
+# stdout open after collection has finished -- long enough to stall anything
+# reading the log to EOF.
+_task_heartbeat() {
+	local now running count name start queued line waited=0
+	while [ ! -f "${TASK_STOP}" ]; do
+		sleep 1
+		waited=$((waited + 1))
+		if [ "${waited}" -lt "${TASK_HEARTBEAT}" ]; then
+			continue
+		fi
+		waited=0
+		now="$(date -u +%s)"
+		running=""
+		count=0
+		while IFS=$'\t' read -r name start; do
+			[ -n "${name}" ] || continue
+			grep -qF "${name}"$'\t' "${TASK_RESULTS}" 2>/dev/null && continue
+			running="${running}${running:+, }${name} $(_task_duration "$((now - start))")"
+			count=$((count + 1))
+		done <"${TASK_STARTED}"
+
+		[ "${count}" -gt 0 ] || continue
+		line="  ... $(wc -l <"${TASK_RESULTS}" | tr -d '[:space:]')/${task_total} done; still running: ${running}"
+
+		# Under a cap most of the run is tasks that have not started yet.
+		# Saying so is the difference between "four things are slow" and
+		# "four at a time is the cap you asked for".
+		queued=$((task_total - $(wc -l <"${TASK_STARTED}" | tr -d '[:space:]')))
+		[ "${queued}" -gt 0 ] && line="${line}; ${queued} queued"
+
+		_task_say "${line}"
+	done
+}
+
+# Start the heartbeat if it is wanted and not already going.
+#
+# Lazy, from task_run, rather than from task_wait: with TASK_JOBS set,
+# task_run blocks, so the launch phase spans most of the run and a heartbeat
+# that only began at task_wait would stay silent through the part of the run
+# that most needs it.
+_task_heartbeat_start() {
+	[ "${TASK_HEARTBEAT}" -gt 0 ] || return 0
+	[ -z "${task_heartbeat_pid}" ] || return 0
+	rm -f "${TASK_STOP}"
+	_task_heartbeat &
+	task_heartbeat_pid=$!
+}
+
+# Stop it, and do not return until it is gone: an orphaned `sleep` keeps the
+# container's stdout open after collection has finished.
+_task_heartbeat_stop() {
+	[ -n "${task_heartbeat_pid}" ] || return 0
+	: >"${TASK_STOP}"
+	wait "${task_heartbeat_pid}" 2>/dev/null || true
+	rm -f "${TASK_STOP}"
+	task_heartbeat_pid=""
+}
+
+_task_say() {
+	printf '%s\n' "$1"
+	printf '%s\n' "$1" >>"${TASK_PROGRESS_LOG}" 2>/dev/null || true
+}
+
+# Wait for everything task_run started, reporting progress while we do.
+#
+# The heartbeat is stopped unconditionally, even when there was nothing to
+# wait for: task_run may have started one and then every task finished before
+# we got here, and a heartbeat nobody stops outlives the collection.
+task_wait() {
+	if [ "${#task_pids[@]}" -gt 0 ]; then
+		wait "${task_pids[@]}" 2>/dev/null || true
+		task_pids=()
+	fi
+
+	_task_heartbeat_stop
+}
+
+# Print the closing summary. Returns non-zero if any task failed, so a caller
+# can propagate that if it wants to; the generated script deliberately does
+# not, because must-gather collects what it can.
+task_summary() {
+	local total ok noop failed missing elapsed
+	local name state rc secs detail
+
+	# Belt and braces. task_wait is what normally stops it, but a caller
+	# that ran tasks and never waited would otherwise leave the heartbeat
+	# printing into the log after the summary.
+	_task_heartbeat_stop
+
+	[ -s "${TASK_RESULTS}" ] || {
+		echo "No tasks were run."
+		return 0
+	}
+
+	total="$(wc -l <"${TASK_RESULTS}" | tr -d '[:space:]')"
+
+	# The plan is declared separately from the task_run calls, so say so if
+	# the two have drifted rather than quietly reporting a different number
+	# from the one announced at the start.
+	if [ "${task_total}" -gt 0 ] && [ "${total}" -ne "${task_total}" ]; then
+		printf 'WARNING: %s task(s) ran but %s were planned; the plan and the\n' \
+			"${total}" "${task_total}"
+		printf '         task_run calls have drifted apart.\n'
+	fi
+	ok="$(awk -F'\t' '$2=="ok"' "${TASK_RESULTS}" | wc -l)"
+	noop="$(awk -F'\t' '$2=="no-op"' "${TASK_RESULTS}" | wc -l)"
+	failed="$(awk -F'\t' '$2=="failed"' "${TASK_RESULTS}" | wc -l)"
+	missing="$(awk -F'\t' '$2=="missing"' "${TASK_RESULTS}" | wc -l)"
+	elapsed=$(($(date -u +%s) - task_started_at))
+
+	echo
+	echo "----------------------------------------------------------------"
+	printf '%s task(s): %s ok, %s no-op, %s failed' \
+		"${total}" "${ok}" "${noop}" "${failed}"
+	[ "${missing}" -eq 0 ] || printf ', %s missing' "${missing}"
+	printf ', in %s\n' "$(_task_duration "${elapsed}")"
+
+	if [ "${failed}" -gt 0 ]; then
+		echo
+		echo "  failed:"
+		while IFS=$'\t' read -r name state rc secs detail; do
+			[ "${state}" = "failed" ] || continue
+			printf '    %-40s rc=%-4s %s\n' "${name}" "${rc}" \
+				"${TASK_LOG_DIR}/${name//\//_}.log"
+		done <"${TASK_RESULTS}"
+		echo
+		echo "  A non-zero status is common and often harmless: oc adm inspect"
+		echo "  exits 1 when an optional resource is absent. Data already"
+		echo "  collected is still written."
+	fi
+
+	if [ "${missing}" -gt 0 ]; then
+		echo
+		echo "  not present in this image:"
+		while IFS=$'\t' read -r name state rc secs detail; do
+			[ "${state}" = "missing" ] || continue
+			printf '    %s\n' "${name}"
+		done <"${TASK_RESULTS}"
+		echo
+		echo "  The plugin catalog describes collection scripts this image"
+		echo "  does not carry, so the two are from different releases. Pass"
+		echo "  the matching --image, or skip them with -n."
+	fi
+
+	if [ "${noop}" -gt 0 ]; then
+		echo
+		echo "  collected nothing (not present on this cluster):"
+		while IFS=$'\t' read -r name state rc secs detail; do
+			[ "${state}" = "no-op" ] || continue
+			printf '    %-40s %s\n' "${name}" "${detail}"
+		done <"${TASK_RESULTS}"
+	fi
+
+	echo
+	echo "  slowest:"
+	sort -t$'\t' -k4 -rn "${TASK_RESULTS}" | head -5 |
+		while IFS=$'\t' read -r name state rc secs detail; do
+			printf '    %-40s %5ds  %s\n' "${name}" "${secs}" "${state}"
+		done
+
+	echo
+	echo "  full output: ${TASK_LOG_DIR}/"
+	echo "  machine readable: ${TASK_RESULTS}"
+	echo "----------------------------------------------------------------"
+
+	[ "${failed}" -eq 0 ]
+}
+
+_task_duration() {
+	local s="$1"
+	if [ "${s}" -lt 60 ]; then
+		printf '%ds' "${s}"
+	elif [ "${s}" -lt 3600 ]; then
+		printf '%dm%02ds' "$((s / 60))" "$((s % 60))"
+	else
+		printf '%dh%02dm' "$((s / 3600))" "$(((s % 3600) / 60))"
+	fi
+}
+
+# Exported so the functions survive a plugin that fans out with `sh -c`,
+# the same way better-gather and common.sh export their own.
+if [ -n "${BASH_VERSION:-}" ]; then
+	export -f task_plan task_run task_wait task_summary task_rebase
+	export -f _task_exec _task_record _task_emit _task_duration
+	export -f _task_heartbeat _task_heartbeat_start _task_heartbeat_stop
+	export -f _task_say _task_slot _task_reap
+fi
+export TASK_BASE_PATH TASK_LOG_DIR TASK_RESULTS TASK_NOOP_PATTERN
+export TASK_STARTED TASK_PROGRESS_LOG TASK_HEARTBEAT TASK_STOP
+export TASK_JOBS TASK_POLL_INTERVAL
+
 export REDUCE_LOGS=compress_logs,skip_rotated_logs
 
 # shellcheck source=/dev/null
@@ -23,24 +467,23 @@ mkdir -p /must-gather
 	echo "must-gather-sos <version>"
 } >/must-gather/version
 
-# One line per plugin: name rc seconds. Read back by must-gather-sos to build
-# manifest.json once the data has been copied out.
-: >/must-gather/must-gather-sos-plugins.log
+# Point the task library at this image's collection directory. Named here
+# rather than left to the library's own default so the Python side and the
+# pod cannot disagree about it: must-gather-sos-plugins.log, one tab
+# separated row per plugin, is read back out of the copied archive to build
+# manifest.json.
+task_rebase /must-gather
 
-run_plugin() {
-	local name="$1"
-	shift
-	local start rc
-	start=$(date +%s)
-	echo "INFO: [must-gather-sos] plugin ${name}: starting"
-	"$@"
-	rc=$?
-	echo "${name} ${rc} $(($(date +%s) - start))" >>/must-gather/must-gather-sos-plugins.log
-	echo "INFO: [must-gather-sos] plugin ${name}: finished rc=${rc}"
-	return "${rc}"
-}
+# Seconds between "still running" lines. There is no flag for this: nothing
+# carries an environment variable into the pod, so the value is written here
+# where --print-script shows it and an edited script can change it. 0 is off.
+TASK_HEARTBEAT=30
 
-pids=()
+# Most collection scripts to run at once. 0 is unlimited, which is what
+# upstream's gather does. Written here for the same reason as the heartbeat.
+TASK_JOBS=0
+
+task_plan core:named core:groups core:all-namespaces service_logs compress
 
 # --- core: base 'oc adm inspect' pass (upstream gather, inline) ---
 named_resources=(ns/openshift-cluster-version ns/default ns/openshift ns/kube-system ns/openshift-etcd ns/assisted-installer)
@@ -79,27 +522,26 @@ core_all_namespaces() {
 	oc adm inspect ${log_collection_args} --dest-dir must-gather ${rotated_pod_logs_arg} "${text}" --all-namespaces
 }
 
-run_plugin core:named core_named &
-pids+=($!)
-run_plugin core:groups core_groups &
-pids+=($!)
-run_plugin core:all-namespaces core_all_namespaces &
-pids+=($!)
+task_run core:named core_named
+task_run core:groups core_groups
+task_run core:all-namespaces core_all_namespaces
 
 # --- parallel plugins ---
-run_plugin service_logs /usr/bin/gather_service_logs master &
-pids+=($!)
+task_run service_logs /usr/bin/gather_service_logs master
 
-if [ ${#pids[@]} -ne 0 ]; then
-	echo "Waiting on subprocesses to finish execution."
-	wait "${pids[@]}"
-fi
+task_wait
 
-# Optionally compress collected log files before the sidecar copies them out.
-# Enabled via --reduce-logs compress_logs.
+# Compress collected log files before the sidecar copies them out, as
+# --reduce-logs compress_logs asked for. Run as a task so the time it takes
+# is visible rather than being silence after the summary.
 if [ "${compress_after_gather}" = "true" ]; then
-	compress_logs
+	task_run compress compress_logs
+	task_wait
 fi
+
+# Does not propagate the rc: must-gather collects what it can, and a plugin
+# exiting non-zero is routine rather than a reason to fail the run.
+task_summary || true
 
 # Force disk flush so everything is visible to the copy container.
 sync

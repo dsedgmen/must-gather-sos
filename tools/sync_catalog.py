@@ -281,6 +281,34 @@ CORE_DESCRIPTION = (
     "cluster resource quotas."
 )
 
+# The image family every catalog this tool generates describes: upstream's
+# layout, where collection-scripts land flat in /usr/bin and common.sh
+# defines the --since and REDUCE_LOGS plumbing. A fork of upstream shares it,
+# which is the point of profiles being separate from catalogs.
+PROFILE = {
+    "id": "openshift",
+    # common.sh is the defining file of this family; the ACM image has no
+    # such thing, which is what makes the two distinguishable in the pod.
+    "detect": "[ -f /usr/bin/common.sh ]",
+    "base_path": "/must-gather",
+    "source": ["/usr/bin/common.sh"],
+    "setup": ["get_log_collection_args"],
+    "version": {"banner": "openshift/must-gather",
+                "command": ". /usr/bin/version && version"},
+    "since": True,
+    "reduce_logs": True,
+    "noop_pattern": None,
+}
+
+# Image references this catalog describes. Matched as case-insensitive
+# substrings of the repository path, so they must not overlap another
+# catalog's: "must-gather" alone would also match "acm-must-gather".
+IMAGE_MATCH = [
+    "origin-must-gather",
+    "openshift/must-gather",
+    "ose-must-gather",
+]
+
 # named_resources+=(a b c)
 _ARRAY_RE = re.compile(
     r"^\s*(named_resources|group_resources|all_ns_resources)\+=\(([^)]*)\)\s*$"
@@ -447,7 +475,7 @@ def discover_scripts(scripts_dir):
     return names
 
 
-def build_catalog(src, ref, commit):
+def build_catalog(src, ref, commit, name="openshift", payload=True):
     scripts_dir = os.path.join(src, "collection-scripts")
     core, invocations = parse_gather(os.path.join(scripts_dir, "gather"))
     all_names = discover_scripts(scripts_dir)
@@ -502,7 +530,17 @@ def build_catalog(src, ref, commit):
         print(f"warning: OVERLAY has entries for missing scripts: {stale}", file=sys.stderr)
 
     return {
-        "catalog_version": 1,
+        "catalog_version": 2,
+        "name": name,
+        "image": {
+            # The payload image oc picks when no --image is given, so no
+            # default of our own: naming one would break a disconnected
+            # cluster whose payload image is mirrored somewhere else.
+            "default": None,
+            "match": IMAGE_MATCH,
+            "payload": payload,
+        },
+        "profile": PROFILE,
         "source": {
             "repo": REPO,
             "ref": ref,
@@ -527,11 +565,21 @@ def main(argv=None):
     ap.add_argument("--ref", default="main", help="branch or tag of openshift/must-gather")
     ap.add_argument("--src", help="use an existing checkout instead of cloning")
     ap.add_argument("-o", "--out", default=os.path.normpath(DEFAULT_OUT))
+    ap.add_argument("--name", default="openshift",
+                    help="catalog name, used by --catalog NAME")
+    ap.add_argument("--payload", action="store_true", default=None,
+                    help="this catalog describes the cluster payload's "
+                         "own must-gather image, the one oc uses when "
+                         "--image is absent (default: true for the "
+                         "openshift catalog, false otherwise)")
     args = ap.parse_args(argv)
+    if args.payload is None:
+        args.payload = args.name == "openshift"
 
     src, commit, cleanup = fetch_source(args.ref, args.src)
     try:
-        catalog = build_catalog(src, args.ref, commit)
+        catalog = build_catalog(src, args.ref, commit,
+                                name=args.name, payload=args.payload)
         # Only refresh the vendored fixtures from the canonical upstream
         # repo; syncing a fork must not overwrite them with the fork's copy.
         vendor = args.src is None or args.ref in ("main", "master") or \

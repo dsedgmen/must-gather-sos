@@ -18,6 +18,12 @@ BuildRequires:  python3-setuptools
 BuildRequires:  python3-wheel
 BuildRequires:  pyproject-rpm-macros
 
+# %%check exercises the in-pod progress library (data/task_common.sh) by
+# running it, so the shell tools it uses have to be in the buildroot.
+BuildRequires:  bash
+BuildRequires:  /usr/bin/awk
+BuildRequires:  /usr/bin/flock
+
 %description
 must-gather-sos is an independent, community side-project. It is not
 provided, maintained, or supported by Red Hat, and comes with no warranty

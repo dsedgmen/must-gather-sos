@@ -241,13 +241,29 @@ def quote_command(argv):
     return " ".join(shell_quote(arg) for arg in argv)
 
 
-def resolve_output_dir(dest_dir):
-    """oc nests its output one level down, under a per-image directory."""
+def resolve_output_dirs(dest_dir):
+    """Every per-image directory oc created under *dest_dir*.
+
+    One per ``--image``, named after the resolved image digest -- which is
+    only known once the pod has started, so the directories are found by
+    looking rather than predicted. Returns them sorted, or an empty list.
+    """
     if not os.path.isdir(dest_dir):
-        return None
-    entries = [
+        return []
+    return [
         os.path.join(dest_dir, name)
         for name in sorted(os.listdir(dest_dir))
         if os.path.isdir(os.path.join(dest_dir, name))
     ]
+
+
+def resolve_output_dir(dest_dir):
+    """oc nests its output one level down, under a per-image directory.
+
+    The single-image answer: with exactly one directory that is the one, and
+    with any other number there is nothing unambiguous to descend into.
+    """
+    if not os.path.isdir(dest_dir):
+        return None
+    entries = resolve_output_dirs(dest_dir)
     return entries[0] if len(entries) == 1 else dest_dir

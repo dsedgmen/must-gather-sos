@@ -10,20 +10,61 @@ closely as it can, restricted to the selected plugins:
 * The three base ``oc adm inspect`` calls are emitted only when ``core`` is
   selected, using the resource lists carried in the catalog.
 * Parallel plugins are backgrounded and waited on; ``post``-phase plugins run
-  afterwards, as upstream does for ``gather_aro``.
+  afterwards, as upstream does for ``gather_aro``. Both go through ``task_run``,
+  which does the backgrounding.
 * ``REDUCE_LOGS`` and the trailing ``compress_logs`` hook are honoured.
+
+On top of that the run is given an sos-report shape by ``data/task_common.sh``,
+which is inlined because the image has no copy of it: the plan is announced
+before anything starts, each task reports ``[n/total]`` as it finishes with its
+own output in its own file, and a summary at the end says what collected
+something, what collected nothing, and what failed.
 """
 
 from __future__ import annotations
 
+import os
+import re
 import shlex
+import textwrap
+from collections import namedtuple
 
 from . import __version__
 from .catalog import CORE
 
+#: One image's share of a run: which catalog describes it, which of its
+#: plugins were selected, the knobs that are per-image, and the --image
+#: reference itself (None when oc is left to pick the payload's own).
+Target = namedtuple("Target", "catalog selection reduce_logs jobs image_ref")
+Target.__new__.__defaults__ = (None, 0, None)
+
+#: Written into each collection directory by a dispatching script, naming the
+#: branch that ran. oc names its output directories after the resolved image
+#: digest, which we cannot predict, so the pod says who it was instead.
+PROFILE_MARKER = "must-gather-sos-profile"
+
 #: Where the in-pod script records one line per plugin, read back afterwards to
-#: build the manifest.
+#: build the manifest. Tab-separated: name, state, rc, seconds, detail.
 PLUGIN_LOG = "/must-gather/must-gather-sos-plugins.log"
+
+#: Where each task's own output lands, relative to the collection directory,
+#: instead of interleaving into the shared stream.
+TASK_LOG_DIR_NAME = "task-logs"
+
+#: A copy of the progress stream, kept because the live one has oc's
+#: disk-usage checker interleaved through it and cannot be cleaned up in-pod.
+PROGRESS_LOG_NAME = "gather-progress.log"
+
+#: Seconds between "still running" lines from the pod. Long enough not to add
+#: to the noise, short enough that a slow plugin does not read as a hang --
+#: oc's own checker prints every five seconds, so this has to stand out from
+#: it rather than keep pace with it.
+HEARTBEAT_SECONDS = 30
+
+#: The sos-style progress library, inlined into every generated script.
+TASK_LIB = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "data", "task_common.sh"
+)
 
 _PREAMBLE = """\
 #!/bin/bash
@@ -38,38 +79,68 @@ _PREAMBLE = """\
 cd / || exit 1
 """
 
-_SETUP = """\
-# shellcheck source=/dev/null
-source /usr/bin/common.sh
-get_log_collection_args
-
-mkdir -p /must-gather
-{{
-\techo "openshift/must-gather"
-\t# shellcheck source=/dev/null
-\t. /usr/bin/version && version
-\techo "must-gather-sos {version}"
-}} >/must-gather/version
-
-# One line per plugin: name rc seconds. Read back by must-gather-sos to build
-# manifest.json once the data has been copied out.
-: >{plugin_log}
-
-run_plugin() {{
-\tlocal name="$1"
-\tshift
-\tlocal start rc
-\tstart=$(date +%s)
-\techo "INFO: [must-gather-sos] plugin ${{name}}: starting"
-\t"$@"
-\trc=$?
-\techo "${{name}} ${{rc}} $(($(date +%s) - start))" >>{plugin_log}
-\techo "INFO: [must-gather-sos] plugin ${{name}}: finished rc=${{rc}}"
-\treturn "${{rc}}"
-}}
-
-pids=()
+_TASK_PATHS_COMMENT = """\
+# Point the task library at this image's collection directory. Named here
+# rather than left to the library's own default so the Python side and the
+# pod cannot disagree about it: must-gather-sos-plugins.log, one tab
+# separated row per plugin, is read back out of the copied archive to build
+# manifest.json.
 """
+
+_HEARTBEAT_COMMENT = """\
+# Seconds between "still running" lines. There is no flag for this: nothing
+# carries an environment variable into the pod, so the value is written here
+# where --print-script shows it and an edited script can change it. 0 is off.
+"""
+
+_JOBS_COMMENT = """\
+# Most collection scripts to run at once. 0 is unlimited, which is what
+# upstream's gather does. Written here for the same reason as the heartbeat.
+"""
+
+
+def _setup(profile, jobs):
+    """The per-image preamble: source its library, then pin the task paths.
+
+    Assembled rather than templated because the two halves of it differ per
+    image family -- openshift sources common.sh and calls
+    get_log_collection_args, ACM sources gather_utils and calls its
+    check_if_* helpers -- while everything from TASK_BASE_PATH down is ours
+    and identical everywhere.
+    """
+    out = []
+    for path in profile.source:
+        out.append("# shellcheck source=/dev/null\n")
+        out.append(f"source {path}\n")
+    for call in profile.setup:
+        out.append(f"{call}\n")
+
+    out.append("\n")
+    out.append(f"mkdir -p {profile.base_path}\n")
+    out.append("{\n")
+    out.append(f'\techo "{profile.version_banner}"\n')
+    if profile.version_command:
+        out.append("\t# shellcheck source=/dev/null\n")
+        out.append(f"\t{profile.version_command}\n")
+    out.append(f'\techo "must-gather-sos {__version__}"\n')
+    out.append(f"}} >{profile.base_path}/version\n")
+
+    out.append("\n")
+    out.append(_TASK_PATHS_COMMENT)
+    out.append(f"task_rebase {profile.base_path}\n")
+    if profile.noop_pattern:
+        out.append("\n")
+        out.append("# How this image says the thing it collects is absent.\n")
+        out.append(f"TASK_NOOP_PATTERN={shlex.quote(profile.noop_pattern)}\n")
+
+    out.append("\n")
+    out.append(_HEARTBEAT_COMMENT)
+    out.append(f"TASK_HEARTBEAT={HEARTBEAT_SECONDS}\n")
+
+    out.append("\n")
+    out.append(_JOBS_COMMENT)
+    out.append(f"TASK_JOBS={int(jobs)}\n")
+    return "".join(out)
 
 _CORE = """\
 # --- core: base 'oc adm inspect' pass (upstream gather, inline) ---
@@ -109,28 +180,40 @@ core_all_namespaces() {{
 \toc adm inspect ${{log_collection_args}} --dest-dir must-gather ${{rotated_pod_logs_arg}} "${{text}}" --all-namespaces
 }}
 
-run_plugin core:named core_named &
-pids+=($!)
-run_plugin core:groups core_groups &
-pids+=($!)
-run_plugin core:all-namespaces core_all_namespaces &
-pids+=($!)
+task_run core:named core_named
+task_run core:groups core_groups
+task_run core:all-namespaces core_all_namespaces
 """
 
-_WAIT = """\
-if [ ${#pids[@]} -ne 0 ]; then
-\techo "Waiting on subprocesses to finish execution."
-\twait "${pids[@]}"
+#: The three base inspect passes are one plugin to the user but three tasks to
+#: the progress counter, because that is how upstream parallelises them.
+CORE_TASKS = ("core:named", "core:groups", "core:all-namespaces")
+
+#: Compression is a task of its own so that gzipping several hundred megabytes
+#: shows as progress rather than as a pause after the summary.
+COMPRESS_TASK = "compress"
+
+#: Emitted only when --reduce-logs compress_logs was asked for, so that the
+#: task_run calls and the announced plan cannot disagree. The runtime guard
+#: stays as well: compress_after_gather is common.sh's own reading of
+#: REDUCE_LOGS, and if it disagrees with ours the right answer is its.
+_COMPRESS = """\
+# Compress collected log files before the sidecar copies them out, as
+# --reduce-logs compress_logs asked for. Run as a task so the time it takes
+# is visible rather than being silence after the summary.
+if [ "${compress_after_gather}" = "true" ]; then
+\ttask_run compress compress_logs
+\ttask_wait
 fi
+"""
+
+_SUMMARY = """\
+# Does not propagate the rc: must-gather collects what it can, and a plugin
+# exiting non-zero is routine rather than a reason to fail the run.
+task_summary || true
 """
 
 _EPILOGUE = """\
-# Optionally compress collected log files before the sidecar copies them out.
-# Enabled via --reduce-logs compress_logs.
-if [ "${compress_after_gather}" = "true" ]; then
-\tcompress_logs
-fi
-
 # Force disk flush so everything is visible to the copy container.
 sync
 """
@@ -140,34 +223,130 @@ def _bash_array(items):
     return " ".join(shlex.quote(item) for item in items)
 
 
+#: Runs a command with extra environment, where that command may be a shell
+#: function. Emitted only when some selected plugin needs it.
+_WITH_ENV = """\
+# env(1) can only exec a real binary, and some plugins are shell functions
+# the image's library defines -- ACM collects hosted clusters that way. This
+# does the same job for both. It runs inside the task's own subshell, so the
+# exports cannot leak into another task.
+mgs_with_env() {
+\twhile [ "$#" -gt 0 ]; do
+\t\tcase "$1" in
+\t\t*=*)
+\t\t\texport "${1?}"
+\t\t\tshift
+\t\t\t;;
+\t\t*) break ;;
+\t\tesac
+\tdone
+\t"$@"
+}
+"""
+
+
+def _is_shell_function(plugin):
+    """A plugin whose 'script' names a function rather than an executable."""
+    return bool(plugin.script) and not plugin.script.startswith("/")
+
+
+def needs_with_env(selection):
+    """Whether any selected plugin is a shell function taking environment."""
+    return any(
+        _is_shell_function(plugin) and selection.invocation(plugin)[0]
+        for name in selection.names
+        for plugin in [selection.catalog.plugins[name]]
+        if plugin.script
+    )
+
+
 def _invocation_line(selection, plugin):
-    """Render one 'run_plugin NAME [env ...] /usr/bin/gather_x args' line."""
+    """Render one 'task_run NAME [env ...] /usr/bin/gather_x args' line."""
     env, argv = selection.invocation(plugin)
-    words = ["run_plugin", shlex.quote(plugin.name)]
+    words = ["task_run", shlex.quote(plugin.name)]
     if env:
-        words.append("env")
+        # A VAR=x prefix would not survive task_run, whose first word after
+        # the name is the command, so the environment has to be carried by
+        # something that execs: env(1) for a binary, and mgs_with_env for a
+        # plugin that is a shell function, which env(1) cannot run at all.
+        words.append("mgs_with_env" if _is_shell_function(plugin) else "env")
         words.extend(f"{key}={shlex.quote(value)}" for key, value in sorted(env.items()))
     words.extend(shlex.quote(arg) for arg in argv)
     return " ".join(words)
 
 
-def generate(catalog, selection, reduce_logs=None):
-    """Return the complete in-pod bash program as a string."""
-    source = catalog.source
-    out = [
-        _PREAMBLE.format(
-            version=__version__,
-            catalog_ref=source.get("ref", "unknown"),
-            catalog_commit=(source.get("commit") or "unknown")[:12],
-            plugins=", ".join(selection.names),
-        )
-    ]
+def _task_library():
+    """The progress library, minus its shebang -- the script has its own."""
+    with open(TASK_LIB, encoding="utf-8") as fh:
+        text = fh.read()
+    if text.startswith("#!"):
+        text = text.split("\n", 1)[1]
+    return text.lstrip("\n")
 
+
+def task_names(selection, reduce_logs=None):
+    """Every task the generated script will run, in the order it declares them.
+
+    Announced up front by ``task_plan``; a disagreement between this list and
+    the ``task_run`` calls is what ``task_summary``'s drift warning catches.
+    """
+    names = list(CORE_TASKS) if selection.core_selected else []
+    names.extend(plugin.name for plugin in selection.plugins("parallel"))
+    names.extend(plugin.name for plugin in selection.plugins("post"))
+    if compresses(selection.catalog, reduce_logs):
+        names.append(COMPRESS_TASK)
+    return names
+
+
+def compresses(catalog, reduce_logs):
+    """Whether this run ends with a compress task.
+
+    Both halves have to agree: the user asked for it, and the image has the
+    common.sh that defines compress_logs. Emitting it for an image without
+    one would put a task in the plan that can only ever fail.
+    """
+    return bool(reduce_logs) and "compress_logs" in reduce_logs \
+        and catalog.profile.reduce_logs
+
+
+def _collection(target, mark_profile=False):
+    """One image's whole collection: set it up, run its plugins, summarise.
+
+    Shared by the single-image script and by each branch of the dispatching
+    one, so the two cannot drift. It assumes the task library is already
+    sourced, and calls task_rebase rather than assigning TASK_BASE_PATH
+    because in a dispatching script the base is chosen after the library.
+    """
+    catalog, selection = target.catalog, target.selection
+    reduce_logs = target.reduce_logs
+    if not catalog.profile.reduce_logs:
+        # The image has no common.sh to read REDUCE_LOGS, so exporting it
+        # would be a promise nothing keeps. cli.summarise warns separately.
+        reduce_logs = None
+
+    out = []
     if reduce_logs:
-        out.append(f"\nexport REDUCE_LOGS={shlex.quote(','.join(reduce_logs))}\n")
+        out.append(f"export REDUCE_LOGS={shlex.quote(','.join(reduce_logs))}\n")
+        out.append("\n")
 
+    out.append(_setup(catalog.profile, target.jobs))
+
+    if mark_profile:
+        # Which branch ran, so must-gather-sos can tell afterwards which
+        # image each of oc's digest-named output directories came from.
+        out.append("\n")
+        out.append("# Read back by must-gather-sos to attribute this "
+                   "directory to an image.\n")
+        out.append(f"echo {shlex.quote(catalog.profile.id)} "
+                   f">{catalog.profile.base_path}/{PROFILE_MARKER}\n")
+
+    if needs_with_env(selection):
+        out.append("\n")
+        out.append(_WITH_ENV)
+
+    names = task_names(selection, reduce_logs)
     out.append("\n")
-    out.append(_SETUP.format(version=__version__, plugin_log=PLUGIN_LOG))
+    out.append(f"task_plan {' '.join(shlex.quote(name) for name in names)}\n")
 
     if selection.core_selected:
         core = catalog.core_resources
@@ -184,20 +363,122 @@ def generate(catalog, selection, reduce_logs=None):
     if parallel:
         out.append("\n# --- parallel plugins ---\n")
         for plugin in parallel:
-            out.append(f"{_invocation_line(selection, plugin)} &\npids+=($!)\n")
+            out.append(f"{_invocation_line(selection, plugin)}\n")
 
-    out.append("\n")
-    out.append(_WAIT)
+    out.append("\ntask_wait\n")
 
     post = selection.plugins("post")
     if post:
         out.append("\n# --- serial plugins (run after the parallel phase) ---\n")
         for plugin in post:
-            out.append(f"{_invocation_line(selection, plugin)}\n")
+            out.append(f"{_invocation_line(selection, plugin)}\ntask_wait\n")
+
+    if COMPRESS_TASK in names:
+        out.append("\n")
+        out.append(_COMPRESS)
+
+    out.append("\n")
+    out.append(_SUMMARY)
+    return "".join(out)
+
+
+def _library_block():
+    return ("\n# --- sos-style progress "
+            "(must_gather_sos/data/task_common.sh, inlined) ---\n"
+            + _task_library())
+
+
+def generate(catalog, selection, reduce_logs=None, jobs=0):
+    """The in-pod program for a single image."""
+    return generate_targets([Target(catalog, selection, reduce_logs, jobs)])
+
+
+def generate_targets(targets):
+    """The in-pod program covering every selected image.
+
+    With one target this is a straight-line script. With several it becomes
+    a dispatch: oc sends the *same* command to every --image pod, so the
+    script has to work out which image it woke up in and run that image's
+    plugins. An image none of the branches recognise falls through to its
+    own entrypoint, which is what it would have done without us.
+    """
+    first = targets[0]
+    out = [
+        _PREAMBLE.format(
+            version=__version__,
+            catalog_ref=first.catalog.source.get("ref", "unknown"),
+            catalog_commit=(first.catalog.source.get("commit") or "unknown")[:12],
+            plugins=_plugin_header(targets),
+        )
+    ]
+    out.append(_library_block())
+
+    if len(targets) == 1:
+        out.append("\n")
+        out.append(_collection(first))
+    else:
+        out.append("\n")
+        out.append(_dispatch(targets))
 
     out.append("\n")
     out.append(_EPILOGUE)
     return "".join(out)
+
+
+def _plugin_header(targets):
+    if len(targets) == 1:
+        return ", ".join(targets[0].selection.names)
+    return "; ".join(
+        f"[{t.catalog.name}] {', '.join(t.selection.names)}" for t in targets
+    )
+
+
+def _dispatch(targets):
+    """mgs_detect, one function per image family, and the case that picks."""
+    out = ["# --- which image is this? ---\n"]
+    out.append("#\n")
+    out.append("# oc sends one command to every --image pod, so the same\n")
+    out.append("# script runs in all of them and has to recognise itself.\n")
+    out.append("mgs_detect() {\n")
+    for target in targets:
+        profile = target.catalog.profile
+        out.append(f"\tif {profile.detect}; then\n")
+        out.append(f"\t\techo {shlex.quote(profile.id)}\n")
+        out.append("\t\treturn 0\n")
+        out.append("\tfi\n")
+    out.append("\treturn 1\n")
+    out.append("}\n")
+
+    for target in targets:
+        profile = target.catalog.profile
+        out.append(f"\n# --- {target.catalog.name}: "
+                   f"{', '.join(target.selection.names)} ---\n")
+        out.append(f"mgs_run_{_identifier(profile.id)}() {{\n")
+        out.append(textwrap.indent(_collection(target, mark_profile=True),
+                                   "\t", lambda line: line.strip() != ""))
+        out.append("}\n")
+
+    out.append("\nmgs_image=\"$(mgs_detect)\"\n")
+    out.append('case "${mgs_image}" in\n')
+    for target in targets:
+        ident = _identifier(target.catalog.profile.id)
+        out.append(f"{target.catalog.profile.id})\n")
+        out.append(f"\tmgs_run_{ident}\n")
+        out.append("\t;;\n")
+    out.append("*)\n")
+    out.append('\techo "must-gather-sos: this image is not one of '
+               f'{", ".join(t.catalog.name for t in targets)};"\n')
+    out.append('\techo "must-gather-sos: running its own entrypoint instead."\n')
+    out.append("\t# What oc would have run had we passed no command at all.\n")
+    out.append("\texec /usr/bin/gather\n")
+    out.append("\t;;\n")
+    out.append("esac\n")
+    return "".join(out)
+
+
+def _identifier(value):
+    """A profile id as a bash function-name fragment."""
+    return re.sub(r"[^A-Za-z0-9_]", "_", value)
 
 
 def selected_phases(selection):
