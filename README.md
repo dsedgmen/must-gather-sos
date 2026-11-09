@@ -3,29 +3,50 @@
 | Check | Status |
 | ----- | ------ |
 | Tests (unit + RPM) | [![RPM build](https://github.com/dsedgmen/must-gather-sos/actions/workflows/rpm-build.yml/badge.svg)](https://github.com/dsedgmen/must-gather-sos/actions/workflows/rpm-build.yml) |
-| Catalog compatibility | [![Catalog compatibility](https://github.com/dsedgmen/must-gather-sos/actions/workflows/catalog-compat.yml/badge.svg)](https://github.com/dsedgmen/must-gather-sos/actions/workflows/catalog-compat.yml) |
+| Script compatibility | [![Catalog compatibility](https://github.com/dsedgmen/must-gather-sos/actions/workflows/catalog-compat.yml/badge.svg)](https://github.com/dsedgmen/must-gather-sos/actions/workflows/catalog-compat.yml) |
 | Security scan | [![Security scan](https://github.com/dsedgmen/must-gather-sos/actions/workflows/security.yml/badge.svg)](https://github.com/dsedgmen/must-gather-sos/actions/workflows/security.yml) |
-| COPR builds | [![COPR](https://copr.fedorainfracloud.org/coprs/dsedgmen/must-gather-sos/package/must-gather-sos/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/dsedgmen/must-gather-sos/) · [el9](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/epel-9-x86_64/) · [el10](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/epel-10-x86_64/) · [f43](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/fedora-43-x86_64/) · [f44](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/fedora-44-x86_64/) · [f45](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/fedora-45-x86_64/) |
+
+| COPR distro | Build |
+| ----------- | ----- |
+| el9 | [![el9](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcopr.fedorainfracloud.org%2Fapi_3%2Fmonitor%3Fownername%3Ddsedgmen%26projectname%3Dmust-gather-sos&query=%24.packages%5B0%5D.chroots%5B%22epel-9-x86_64%22%5D.state&label=el9)](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/epel-9-x86_64/) |
+| el10 | [![el10](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcopr.fedorainfracloud.org%2Fapi_3%2Fmonitor%3Fownername%3Ddsedgmen%26projectname%3Dmust-gather-sos&query=%24.packages%5B0%5D.chroots%5B%22epel-10-x86_64%22%5D.state&label=el10)](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/epel-10-x86_64/) |
+| Fedora 43 | [![f43](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcopr.fedorainfracloud.org%2Fapi_3%2Fmonitor%3Fownername%3Ddsedgmen%26projectname%3Dmust-gather-sos&query=%24.packages%5B0%5D.chroots%5B%22fedora-43-x86_64%22%5D.state&label=f43)](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/fedora-43-x86_64/) |
+| Fedora 44 | [![f44](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcopr.fedorainfracloud.org%2Fapi_3%2Fmonitor%3Fownername%3Ddsedgmen%26projectname%3Dmust-gather-sos&query=%24.packages%5B0%5D.chroots%5B%22fedora-44-x86_64%22%5D.state&label=f44)](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/fedora-44-x86_64/) |
+| Fedora 45 | [![f45](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcopr.fedorainfracloud.org%2Fapi_3%2Fmonitor%3Fownername%3Ddsedgmen%26projectname%3Dmust-gather-sos&query=%24.packages%5B0%5D.chroots%5B%22fedora-45-x86_64%22%5D.state&label=f45)](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/fedora-45-x86_64/) |
 
 <!-- catalog-status:start -->
 
-#### Shipped catalogs
+#### Script compatibility
 
-| Catalog       | Sync   | Upstream               | Ref  | Commit       | Synced     | Plugins | Status |
-| ------------- | ------ | ---------------------- | ---- | ------------ | ---------- | ------- | ------ |
-| openshift     | auto   | openshift/must-gather  | main | e2487964fe98 | 2026-10-16 | 33      | match  |
-| better-gather | auto   | dsedgmen/better-gather | main | 172bfe2e6dc6 | 2026-10-16 | 33      | match  |
-| acm           | manual | stolostron/must-gather | main | 41479894400c | 2026-10-27 | 10      | manual |
+Does must-gather-sos still generate a working gather script against each tracked must-gather version? (`pass` / `fail` / `error`)
 
-#### Upstream coverage
+| Catalog       | Version | Result | Plugins | Notes               |
+| ------------- | ------- | ------ | ------- | ------------------- |
+| openshift     | main    | pass   | 33      | 3 plugins exercised |
+| openshift     | 4.16    | pass   | 25      | 3 plugins exercised |
+| openshift     | 4.17    | pass   | 26      | 3 plugins exercised |
+| openshift     | 4.18    | pass   | 26      | 3 plugins exercised |
+| openshift     | 4.19    | pass   | 28      | 3 plugins exercised |
+| openshift     | 4.20    | pass   | 30      | 3 plugins exercised |
+| openshift     | 4.21    | pass   | 31      | 3 plugins exercised |
+| openshift     | 4.22    | pass   | 32      | 3 plugins exercised |
+| openshift     | 4.23    | pass   | 33      | 3 plugins exercised |
+| better-gather | main    | pass   | 33      | 3 plugins exercised |
+| better-gather | 4.18    | pass   | 26      | 3 plugins exercised |
+| better-gather | 4.19    | pass   | 28      | 3 plugins exercised |
+| better-gather | 4.20    | pass   | 30      | 3 plugins exercised |
+| better-gather | 4.21    | pass   | 31      | 3 plugins exercised |
+| better-gather | 4.22    | pass   | 32      | 3 plugins exercised |
+| better-gather | 4.23    | pass   | 33      | 3 plugins exercised |
+| acm           | shipped | pass   | 10      | 2 plugins exercised |
 
-How each tracked upstream ref relates to the shipped catalog: `match` identical, `older` upstream is behind (typical for past releases), `newer` upstream has moved on (re-sync), `diverged` changes both ways, `error` check failed.
+#### Compatibility matrix
 
-| Catalog       | main   | 4.16  | 4.17  | 4.18  | 4.19  | 4.20  | 4.21  | 4.22  | 4.23  |
-| ------------- | ------ | ----- | ----- | ----- | ----- | ----- | ----- | ----- | ----- |
-| openshift     | match  | older | older | older | older | older | older | older | match |
-| better-gather | match  | —     | —     | older | older | older | older | older | older |
-| acm           | manual | —     | —     | —     | —     | —     | —     | —     | —     |
+| Catalog       | main | 4.16 | 4.17 | 4.18 | 4.19 | 4.20 | 4.21 | 4.22 | 4.23 | shipped |
+| ------------- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ------- |
+| openshift     | pass | pass | pass | pass | pass | pass | pass | pass | pass | —       |
+| better-gather | pass | —    | —    | pass | pass | pass | pass | pass | pass | —       |
+| acm           | —    | —    | —    | —    | —    | —    | —    | —    | —    | pass    |
 
 <!-- catalog-status:end -->
 

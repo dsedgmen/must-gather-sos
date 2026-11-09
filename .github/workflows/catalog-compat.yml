@@ -1,14 +1,13 @@
 name: Catalog compatibility
 
-# Offline unit tests always; live upstream matrix on push/PR/schedule.
-# On main, the matrix is also written into the README status tables.
+# Smoke-test must-gather-sos against every tracked must-gather version.
+# Runs on every push/PR (not only main) so the badge and tables stay alive
+# on feature branches too.
 
 on:
   push:
-    branches: [main]
   pull_request:
   schedule:
-    # Weekly refresh so release-branch drift does not go unnoticed.
     - cron: "17 6 * * 1"
   workflow_dispatch:
 
@@ -17,7 +16,7 @@ permissions:
 
 jobs:
   unit:
-    name: Offline catalog tests
+    name: Offline script-compat tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,14 +28,14 @@ jobs:
       - name: Install tools dependencies
         run: python3 -m pip install pyyaml
 
-      - name: Registry, sync fixtures, and drift classifier
+      - name: Fixture sync + script smoke tests
         run: python3 -m unittest tests.test_catalog_sync -v
 
       - name: Every shipped catalog still loads
         run: python3 -m unittest tests.test_catalog.TestEveryShippedCatalog -v
 
   upstream:
-    name: Upstream compatibility matrix
+    name: Upstream script compatibility
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -50,7 +49,7 @@ jobs:
       - name: Install tools dependencies
         run: python3 -m pip install pyyaml
 
-      - name: Compare shipped catalogs to tracked upstream refs
+      - name: Smoke-test against each tracked upstream ref
         id: compat
         run: |
           set +e
@@ -63,9 +62,9 @@ jobs:
           rc=$?
           set -e
           {
-            echo "## Catalog compatibility"
+            echo "## Script compatibility"
             echo
-            echo "Shipped catalogs vs each tracked upstream ref from \`tools/catalogs.yaml\`."
+            echo "must-gather-sos generate+run smoke tests against each ref in \`tools/catalogs.yaml\`."
             echo
             cat catalog-status.md
           } >> "$GITHUB_STEP_SUMMARY"
