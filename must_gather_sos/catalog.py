@@ -48,6 +48,98 @@ _FALSE = {"off", "false", "no", "0", "disable", "disabled"}
 
 _DEFAULT_CATALOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "openshift.json")
 
+#: Catalog schema versions this build understands. Version 2 added the image
+#: identity and the runtime profile, and made ``core`` optional; a version 1
+#: document still loads, and is given the OpenShift profile below. The gate
+#: matters because catalogs are user-supplyable with ``--catalog``: a v2
+#: document handed to a v1 build would otherwise die on a missing ``core``
+#: key rather than saying which part it did not understand.
+SUPPORTED_VERSIONS = (1, 2)
+
+
+class Profile:
+    """How to prepare one family of must-gather image before running plugins.
+
+    This is what ``script.py`` used to hardcode: which library to source, what
+    to call before collecting, where the collection directory is, and which of
+    ``--since`` / ``--reduce-logs`` the image can actually honour.
+
+    A profile describes an image *family*, not a catalog, and several catalogs
+    may share one: ``openshift.json`` and ``better-gather.json`` describe the
+    same image layout and differ only in how far ``--since`` reaches.
+
+    The defaults are the OpenShift ones, so a version 1 catalog -- which has no
+    ``profile`` key at all -- behaves exactly as it did before profiles existed.
+    """
+
+    def __init__(self, spec=None):
+        spec = spec or {}
+        self.id = spec.get("id", "openshift")
+        # A shell test that is true inside this image and false in the others,
+        # used to dispatch when one script is sent to several images.
+        self.detect = spec.get("detect")
+        self.base_path = spec.get("base_path", "/must-gather")
+        self.source = list(spec.get("source", ["/usr/bin/common.sh"]))
+        self.setup = list(spec.get("setup", ["get_log_collection_args"]))
+
+        # An explicit null command means "this image has no /usr/bin/version";
+        # an absent key means "the usual one".
+        version = spec.get("version") or {}
+        self.version_banner = version.get("banner", "openshift/must-gather")
+        self.version_command = version.get(
+            "command", ". /usr/bin/version && version"
+        )
+
+        # Whether the image reads MUST_GATHER_SINCE / REDUCE_LOGS at all. oc
+        # sets them on every pod regardless, so an image that ignores them
+        # makes the flags misleading rather than merely inert, and the CLI
+        # needs to say so once instead of per plugin.
+        self.since = bool(spec.get("since", True))
+        self.reduce_logs = bool(spec.get("reduce_logs", True))
+
+        # Overrides TASK_NOOP_PATTERN, which encodes how upstream's scripts
+        # phrase "the thing I collect is not installed". Another product
+        # words it differently, and the ok/no-op split depends on matching it.
+        self.noop_pattern = spec.get("noop_pattern")
+
+    @property
+    def plugin_log(self):
+        """Where the in-pod task library writes its results, in this image."""
+        return f"{self.base_path}/must-gather-sos-plugins.log"
+
+    def __repr__(self):
+        return f"<Profile {self.id}>"
+
+
+class Image:
+    """Which must-gather image(s) a catalog describes."""
+
+    def __init__(self, spec=None):
+        spec = spec or {}
+        self.default = spec.get("default")
+        self.match = [m.lower() for m in spec.get("match", [])]
+        # True for the catalog describing the cluster payload's own image,
+        # the one oc runs when --image is absent.
+        self.payload = bool(spec.get("payload", False))
+
+    def matches(self, ref):
+        """Does *ref* name an image this catalog describes?
+
+        Substrings of the repository path, not regexes: a malformed pattern
+        in a data file is a traceback a long way from whoever wrote it. The
+        host and the tag or digest are dropped first, so a mirrored registry
+        and a pinned digest both still match.
+        """
+        if not ref:
+            return False
+        path = ref.split("@", 1)[0]
+        head, _, tail = path.partition("/")
+        if "." in head or ":" in head or head == "localhost":
+            path = tail or path          # drop a registry host
+        path = path.rsplit(":", 1)[0]    # drop the tag
+        path = path.lower()
+        return any(pattern in path for pattern in self.match)
+
 
 class Plugin:
     """One collectable unit: a gather_* script, or the synthetic 'core'."""
@@ -91,26 +183,48 @@ class Catalog:
     def __init__(self, doc, path=None):
         self.path = path
         self.version = doc.get("catalog_version")
-        if self.version != 1:
-            raise UserError(f"unsupported catalog_version {self.version!r} in {path}")
+        if self.version not in SUPPORTED_VERSIONS:
+            raise UserError(
+                f"unsupported catalog_version {self.version!r} in {path}; "
+                f"this build understands "
+                f"{', '.join(str(v) for v in SUPPORTED_VERSIONS)}"
+            )
         self.source = doc.get("source", {})
-        self.core_resources = doc["core"]
+        self.profile = Profile(doc.get("profile"))
+        self.image = Image(doc.get("image"))
+        self.name = doc.get("name") or _name_from_path(path)
 
-        self.plugins = {CORE: Plugin(CORE, {
-            "default": True,
-            "phase": "core",
-            "order": -1,
-            "description": doc["core"].get("description", ""),
-            "since": doc["core"].get("since", "pod-logs"),
-        })}
+        # Optional since version 2: not every must-gather image performs an
+        # inline 'oc adm inspect' pass the way upstream's gather does.
+        self.core_resources = doc.get("core")
+
+        self.plugins = {}
+        if self.core_resources:
+            if "get_log_collection_args" not in self.profile.setup:
+                # The core template expands ${log_collection_args} and
+                # ${rotated_pod_logs_arg}, which only common.sh defines.
+                # Without it the inspect calls would silently run unfiltered.
+                raise UserError(
+                    f"catalog {self.name!r} declares 'core' but its profile "
+                    "does not call get_log_collection_args; the base inspect "
+                    "pass needs common.sh"
+                )
+            self.plugins[CORE] = Plugin(CORE, {
+                "default": True,
+                "phase": "core",
+                "order": -1,
+                "description": self.core_resources.get("description", ""),
+                "since": self.core_resources.get("since", "pod-logs"),
+            })
+
         for name, spec in doc["plugins"].items():
-            if name in self.plugins:
+            if name in self.plugins or name == CORE:
                 raise UserError(f"catalog defines reserved plugin name {name!r}")
             self.plugins[name] = Plugin(name, spec)
 
     @classmethod
     def load(cls, path=None):
-        path = path or _DEFAULT_CATALOG
+        path = resolve_catalog(path) if path else _default_catalog()
         try:
             with open(path, encoding="utf-8") as fh:
                 doc = json.load(fh)
@@ -138,6 +252,84 @@ class Catalog:
         """Order plugins the way upstream's gather does, core first."""
         plugin = self.plugins[name]
         return (plugin.order, plugin.name)
+
+
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
+
+def registry():
+    """The catalogs we ship, as {name: path}.
+
+    By filename, not by reading each one: this is used to resolve
+    ``--catalog NAME`` and to list the choices, both of which must be cheap
+    and must not fail because some unrelated catalog is malformed.
+    """
+    try:
+        names = sorted(os.listdir(_DATA_DIR))
+    except OSError:  # pragma: no cover - the package would be broken
+        return {}
+    return {
+        os.path.splitext(name)[0]: os.path.join(_DATA_DIR, name)
+        for name in names if name.endswith(".json")
+    }
+
+
+def resolve_catalog(value):
+    """Turn a --catalog argument into a path.
+
+    A bare name from the registry first, then a filesystem path, so
+    ``--catalog acm`` works without anyone knowing where the data directory
+    is, and ``--catalog ./mine.json`` still works for one you wrote.
+    """
+    known = registry()
+    if value in known:
+        return known[value]
+    if os.path.sep in value or value.endswith(".json"):
+        return value
+    raise UserError(
+        f"unknown catalog {value!r}. Built in: {', '.join(sorted(known))}. "
+        "Pass a path to use one of your own."
+    )
+
+
+def _default_catalog():
+    """The catalog for the image oc runs when --image is absent."""
+    for path in registry().values():
+        try:
+            with open(path, encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if (doc.get("image") or {}).get("payload"):
+            return path
+    return _DEFAULT_CATALOG
+
+
+def describe_catalogs():
+    """One summary row per shipped catalog, for --list-catalogs."""
+    rows = []
+    for name, path in registry().items():
+        try:
+            catalog = Catalog.load(path)
+        except UserError:
+            continue
+        rows.append({
+            "name": name,
+            "profile": catalog.profile.id,
+            "images": list(catalog.image.match),
+            "default_image": catalog.image.default,
+            "payload": catalog.image.payload,
+            "plugins": len(catalog.plugins),
+            "ref": catalog.source.get("ref"),
+        })
+    return rows
+
+
+def _name_from_path(path):
+    """A catalog with no name of its own is known by its filename."""
+    if not path:
+        return "catalog"
+    return os.path.splitext(os.path.basename(path))[0]
 
 
 def _unknown_plugin_message(name, known):
@@ -217,19 +409,35 @@ class Selection:
 
 
 def resolve(catalog, only=None, skip=None, enable=None, all_plugins=False,
-            configured=()):
+            configured=(), known_elsewhere=()):
     """Apply sos selection semantics and return (names, warnings).
 
     *configured* is the set of plugins the user gave ``-k`` options for; it only
     affects ``--all-plugins``, which otherwise cannot include plugins that
     refuse to run without one.
+
+    *known_elsewhere* names plugins some other catalog in the same run has.
+    Selection flags are global across images, so a name this catalog does not
+    know is not a typo when another one does -- it just does not apply here.
     """
     only = split_list(only) if isinstance(only, str) else list(only or [])
     skip = split_list(skip) if isinstance(skip, str) else list(skip or [])
     enable = split_list(enable) if isinstance(enable, str) else list(enable or [])
 
+    known_elsewhere = set(known_elsewhere)
     for name in only + skip + enable:
-        catalog.get(name)  # raises UserError on unknown names
+        if name not in known_elsewhere:
+            catalog.get(name)  # raises UserError on unknown names
+
+    # Drop the names another image's catalog owns. Remember whether --only
+    # was asked for before filtering: "--only, and none of them are here"
+    # must select nothing, not fall through to the defaults.
+    only_requested = bool(only)
+    only = [n for n in only if n in catalog.plugins]
+    skip = [n for n in skip if n in catalog.plugins]
+    enable = [n for n in enable if n in catalog.plugins]
+    if only_requested and not only:
+        return [], []
 
     if all_plugins and only:
         raise UserError("--all-plugins and --only-plugins are mutually exclusive")
@@ -265,6 +473,10 @@ def resolve(catalog, only=None, skip=None, enable=None, all_plugins=False,
         selected = (catalog.defaults - set(skip)) | set(enable)
 
     if not selected:
+        if known_elsewhere:
+            # Nothing here matched, but another image's catalog may well
+            # have. The caller drops this image and says so.
+            return [], warnings
         raise UserError("no plugins selected")
 
     supersets = sorted(n for n in selected if catalog.plugins[n].superset)
@@ -284,7 +496,7 @@ def resolve(catalog, only=None, skip=None, enable=None, all_plugins=False,
     return sorted(selected, key=catalog.sort_key), warnings
 
 
-def parse_options(catalog, raw_options):
+def parse_options(catalog, raw_options, known_elsewhere=()):
     """Parse ``-k plugin.option[=value]`` strings into {plugin: {opt: value}}."""
     parsed = {}
     for raw in raw_options or []:
@@ -294,6 +506,8 @@ def parse_options(catalog, raw_options):
                 f"bad plugin option {raw!r}: expected 'plugin.option=value'"
             )
         plugin_name, _, opt_name = spec_part.partition(".")
+        if plugin_name not in catalog.plugins and plugin_name in known_elsewhere:
+            continue  # another image's plugin; not ours to configure
         plugin = catalog.get(plugin_name)
 
         if opt_name not in plugin.options:
@@ -362,11 +576,15 @@ def parse_options(catalog, raw_options):
 
 
 def build_selection(catalog, only=None, skip=None, enable=None,
-                    all_plugins=False, raw_options=None):
+                    all_plugins=False, raw_options=None, known_elsewhere=()):
     """Resolve names and options together, cross-checking the two."""
-    options = parse_options(catalog, raw_options)
+    options = parse_options(catalog, raw_options,
+                            known_elsewhere=known_elsewhere)
     names, warnings = resolve(catalog, only, skip, enable, all_plugins,
-                              configured=set(options))
+                              configured=set(options),
+                              known_elsewhere=known_elsewhere)
+    if not names:
+        return Selection(catalog, [], {}, warnings)
 
     unselected = sorted(set(options) - set(names))
     if unselected:

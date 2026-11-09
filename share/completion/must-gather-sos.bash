@@ -56,7 +56,16 @@ _must_gather_sos() {
 			"$(printf '%s\n' skip_rotated_logs compress_service_logs compress_logs)"
 		return
 		;;
-	--dest-dir | --catalog | --oc | --source-dir)
+	--catalog)
+		# Built-in names first; a path is still accepted.
+		mapfile -t COMPREPLY < <(compgen -W \
+			"$(must-gather-sos --list-catalogs 2>/dev/null | awk '/plugins, profile/ {print $1}')" \
+			-- "$cur")
+		[ ${#COMPREPLY[@]} -gt 0 ] ||
+			mapfile -t COMPREPLY < <(compgen -f -- "$cur")
+		return
+		;;
+	--dest-dir | --oc | --source-dir)
 		mapfile -t COMPREPLY < <(compgen -d -- "$cur")
 		return
 		;;
@@ -69,9 +78,10 @@ _must_gather_sos() {
 	mapfile -t COMPREPLY < <(compgen -W "
 		--help --version
 		-l --list-plugins --format --list-plugin-names --list-plugin-options
+		--list-catalogs
 		-o --only-plugins -n --skip-plugins -e --enable-plugins
 		-a --all-plugins -k --plugin-option
-		--since --since-time --reduce-logs
+		--since --since-time --reduce-logs --jobs
 		--dest-dir --case-id --archive --no-manifest
 		--image --image-stream --timeout --node-name --node-selector
 		--run-namespace --host-network --volume-percentage --source-dir

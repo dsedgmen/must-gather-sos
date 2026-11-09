@@ -23,6 +23,7 @@ _arguments -s -S \
 	'--format[output format for --list-plugins]:format:(text json)' \
 	'--list-plugin-names[print bare plugin names, one per line]' \
 	'--list-plugin-options[print bare plugin.option keys, one per line]' \
+	'--list-catalogs[list the built-in plugin catalogs and their images]' \
 	'(-o --only-plugins)'{-o,--only-plugins}'[run only these plugins]:plugins:_must_gather_sos_plugins' \
 	'(-n --skip-plugins)'{-n,--skip-plugins}'[run the defaults except these]:plugins:_must_gather_sos_plugins' \
 	'(-e --enable-plugins)'{-e,--enable-plugins}'[also run these non-default plugins]:plugins:_must_gather_sos_plugins' \
@@ -31,6 +32,7 @@ _arguments -s -S \
 	'--since[only logs newer than a duration]:duration:(30s 5m 30m 1h 2h 6h 24h)' \
 	'--since-time[only logs after an RFC3339 time]:time:' \
 	'--reduce-logs[log reduction options]:options:_values -s , opt skip_rotated_logs compress_service_logs compress_logs' \
+	'*--jobs[most collection scripts to run at once in the pod (0 = unlimited)]:count:' \
 	'--dest-dir[write gathered data here]:directory:_files -/' \
 	'--case-id[support case number]:case id:' \
 	'--archive[tar up the result]::format:(xz gz none)' \
@@ -50,5 +52,5 @@ _arguments -s -S \
 	'--batch[do not prompt for confirmation]' \
 	'(-q --quiet)'{-q,--quiet}'[quieter output]' \
 	'(-v --verbose)'{-v,--verbose}'[more output]' \
-	'--catalog[use an alternative plugin catalog]:catalog:_files' \
+	'*--catalog[plugin catalog: a built-in name, a path, or IMAGE=NAME]:catalog:' \
 	'--oc[path to the oc binary]:oc:_files'

@@ -1,5 +1,29 @@
 {
-  "catalog_version": 1,
+  "catalog_version": 2,
+  "name": "better-gather",
+  "image": {
+    "default": null,
+    "match": [],
+    "payload": false
+  },
+  "profile": {
+    "id": "openshift",
+    "detect": "[ -f /usr/bin/common.sh ]",
+    "base_path": "/must-gather",
+    "source": [
+      "/usr/bin/common.sh"
+    ],
+    "setup": [
+      "get_log_collection_args"
+    ],
+    "version": {
+      "banner": "openshift/must-gather",
+      "command": ". /usr/bin/version && version"
+    },
+    "since": true,
+    "reduce_logs": true,
+    "noop_pattern": null
+  },
   "source": {
     "repo": "https://github.com/openshift/must-gather.git",
     "ref": "better-gather",

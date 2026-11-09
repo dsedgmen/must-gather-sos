@@ -15,12 +15,103 @@ VALID_TYPES = {"bool", "str", "list"}
 VALID_PHASES = {"core", "parallel", "post"}
 
 
+DATA_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "must_gather_sos", "data",
+)
+
+
+def shipped_catalogs():
+    """Every catalog we ship, by name."""
+    return {
+        os.path.splitext(f)[0]: os.path.join(DATA_DIR, f)
+        for f in sorted(os.listdir(DATA_DIR)) if f.endswith(".json")
+    }
+
+
+class TestEveryShippedCatalog(unittest.TestCase):
+    """Structural invariants that hold for any catalog, not just OpenShift's.
+
+    Separate from the OpenShift content assertions below so that adding a
+    catalog for another product picks these up without inheriting claims
+    about etcd and clusterversion.
+    """
+
+    def test_all_load_and_are_self_describing(self):
+        for name, path in shipped_catalogs().items():
+            with self.subTest(catalog=name):
+                catalog = Catalog.load(path)
+                self.assertIn(catalog.version, (1, 2))
+                self.assertTrue(catalog.source.get("commit"))
+                self.assertEqual(catalog.name, name)
+
+    def test_every_plugin_has_a_script_and_a_description(self):
+        for name, path in shipped_catalogs().items():
+            catalog = Catalog.load(path)
+            for plugin_name, plugin in catalog.plugins.items():
+                with self.subTest(catalog=name, plugin=plugin_name):
+                    if plugin.is_core:
+                        self.assertIsNone(plugin.script)
+                        continue
+                    self.assertTrue(plugin.script)
+                    # Either an executable in the image, or the name of a
+                    # shell function its library defines -- ACM collects
+                    # hosted clusters with dump_hostedcluster.
+                    if plugin.script.startswith("/"):
+                        self.assertTrue(plugin.script.startswith("/usr/bin/"))
+                    else:
+                        self.assertRegex(plugin.script, r"^[A-Za-z_][A-Za-z0-9_]*$")
+                    self.assertTrue(plugin.description)
+
+    def test_phases_and_option_specs_are_well_formed_everywhere(self):
+        for name, path in shipped_catalogs().items():
+            catalog = Catalog.load(path)
+            for plugin_name, plugin in catalog.plugins.items():
+                with self.subTest(catalog=name, plugin=plugin_name):
+                    self.assertIn(plugin.phase, VALID_PHASES)
+                    for opt, spec in plugin.options.items():
+                        where = f"{plugin_name}.{opt}"
+                        self.assertIn(spec.get("kind", "opt"), VALID_KINDS, where)
+                        self.assertIn(spec.get("type", "str"), VALID_TYPES, where)
+
+    def test_profiles_are_usable(self):
+        for name, path in shipped_catalogs().items():
+            with self.subTest(catalog=name):
+                profile = Catalog.load(path).profile
+                self.assertTrue(profile.id)
+                self.assertTrue(profile.detect)
+                self.assertTrue(profile.base_path.startswith("/"))
+                self.assertTrue(profile.source)
+
+    def test_exactly_one_catalog_claims_the_payload_image(self):
+        # It is the fallback when no --image is given, so two would be
+        # ambiguous and none would leave the default run with no catalog.
+        claimants = [n for n, p in shipped_catalogs().items()
+                     if Catalog.load(p).image.payload]
+        self.assertEqual(claimants, ["openshift"])
+
+    def test_image_patterns_do_not_overlap_between_catalogs(self):
+        # Matching is by substring, so "must-gather" in one catalog would
+        # also claim another product's "acm-must-gather".
+        catalogs = {n: Catalog.load(p) for n, p in shipped_catalogs().items()}
+        for name, catalog in catalogs.items():
+            for pattern in catalog.image.match:
+                for other_name, other in catalogs.items():
+                    if other_name == name:
+                        continue
+                    with self.subTest(pattern=pattern, other=other_name):
+                        self.assertFalse(
+                            other.image.matches(f"registry.example.com/{pattern}:v1"),
+                            f"{other_name} also claims {name}'s {pattern!r}",
+                        )
+
+
 class TestShippedCatalog(unittest.TestCase):
     def setUp(self):
         self.catalog = Catalog.load()
 
     def test_loads(self):
-        self.assertEqual(self.catalog.version, 1)
+        self.assertEqual(self.catalog.version, 2)
         self.assertTrue(self.catalog.source.get("commit"))
 
     def test_core_is_synthetic_and_default(self):
@@ -45,7 +136,7 @@ class TestShippedCatalog(unittest.TestCase):
         self.assertNotIn("service_logs_util", self.catalog.names)
         self.assertNotIn("ppc_single_node", self.catalog.names)
 
-    def test_every_real_plugin_has_a_script_and_description(self):
+    def test_every_real_plugin_follows_the_upstream_script_naming(self):
         for name, plugin in self.catalog.plugins.items():
             if plugin.is_core:
                 continue
@@ -115,6 +206,69 @@ class TestCatalogLoading(unittest.TestCase):
         doc["plugins"]["core"] = {"script": "/usr/bin/gather_core"}
         with self.assertRaises(UserError):
             Catalog(doc, "test")
+
+    def _doc(self, **changes):
+        with open(CATALOG_PATH, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        doc.update(changes)
+        return doc
+
+    def test_a_version_1_catalog_still_loads_with_the_default_profile(self):
+        # v1 documents have no profile key at all; they predate the idea.
+        doc = self._doc(catalog_version=1)
+        doc.pop("profile", None)
+        doc.pop("image", None)
+        catalog = Catalog(doc, "test")
+        self.assertEqual(catalog.profile.id, "openshift")
+        self.assertEqual(catalog.profile.source, ["/usr/bin/common.sh"])
+        self.assertIn(CORE, catalog.names)
+
+    def test_core_is_optional(self):
+        doc = self._doc()
+        doc.pop("core")
+        catalog = Catalog(doc, "test")
+        self.assertNotIn(CORE, catalog.names)
+        self.assertIsNone(catalog.core_resources)
+
+    def test_core_without_common_sh_is_rejected(self):
+        # The core template expands ${log_collection_args}, which only
+        # common.sh defines; an unfiltered inspect would be silent breakage.
+        doc = self._doc()
+        doc["profile"] = dict(doc["profile"], setup=["check_if_hub"])
+        with self.assertRaises(UserError) as ctx:
+            Catalog(doc, "test")
+        self.assertIn("get_log_collection_args", str(ctx.exception))
+
+    def test_an_explicitly_null_version_command_is_kept(self):
+        # Distinct from an absent key: it means the image has no
+        # /usr/bin/version, not "use the usual one".
+        doc = self._doc()
+        doc["profile"] = dict(doc["profile"], version={"banner": "x",
+                                                       "command": None})
+        self.assertIsNone(Catalog(doc, "test").profile.version_command)
+
+
+class TestImageMatching(unittest.TestCase):
+    def setUp(self):
+        self.catalog = Catalog.load()
+
+    def test_matches_regardless_of_registry_and_tag(self):
+        for ref in (
+            "quay.io/openshift/origin-must-gather:4.18",
+            "registry.redhat.io/openshift4/ose-must-gather:v4.18",
+            "mirror.example.com:5000/openshift/origin-must-gather@sha256:abc",
+            "openshift/origin-must-gather",
+        ):
+            with self.subTest(ref=ref):
+                self.assertTrue(self.catalog.image.matches(ref))
+
+    def test_does_not_claim_another_products_must_gather(self):
+        self.assertFalse(self.catalog.image.matches(
+            "registry.redhat.io/rhacm2/acm-must-gather-rhel9:v2.14"))
+
+    def test_no_reference_matches_nothing(self):
+        self.assertFalse(self.catalog.image.matches(None))
+        self.assertFalse(self.catalog.image.matches(""))
 
 
 if __name__ == "__main__":
