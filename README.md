@@ -18,35 +18,13 @@
 
 #### Script compatibility
 
-Does must-gather-sos still generate a working gather script against each tracked must-gather version? (`pass` / `fail` / `error`)
+Full generate+run of **every** plugin against each tracked must-gather version (`pass` / `fail` / `error`).
 
-| Catalog       | Version | Result | Plugins | Notes               |
-| ------------- | ------- | ------ | ------- | ------------------- |
-| openshift     | main    | pass   | 33      | 3 plugins exercised |
-| openshift     | 4.16    | pass   | 25      | 3 plugins exercised |
-| openshift     | 4.17    | pass   | 26      | 3 plugins exercised |
-| openshift     | 4.18    | pass   | 26      | 3 plugins exercised |
-| openshift     | 4.19    | pass   | 28      | 3 plugins exercised |
-| openshift     | 4.20    | pass   | 30      | 3 plugins exercised |
-| openshift     | 4.21    | pass   | 31      | 3 plugins exercised |
-| openshift     | 4.22    | pass   | 32      | 3 plugins exercised |
-| openshift     | 4.23    | pass   | 33      | 3 plugins exercised |
-| better-gather | main    | pass   | 33      | 3 plugins exercised |
-| better-gather | 4.18    | pass   | 26      | 3 plugins exercised |
-| better-gather | 4.19    | pass   | 28      | 3 plugins exercised |
-| better-gather | 4.20    | pass   | 30      | 3 plugins exercised |
-| better-gather | 4.21    | pass   | 31      | 3 plugins exercised |
-| better-gather | 4.22    | pass   | 32      | 3 plugins exercised |
-| better-gather | 4.23    | pass   | 33      | 3 plugins exercised |
-| acm           | shipped | pass   | 10      | 2 plugins exercised |
-
-#### Compatibility matrix
-
-| Catalog       | main | 4.16 | 4.17 | 4.18 | 4.19 | 4.20 | 4.21 | 4.22 | 4.23 | shipped |
-| ------------- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ------- |
-| openshift     | pass | pass | pass | pass | pass | pass | pass | pass | pass | —       |
-| better-gather | pass | —    | —    | pass | pass | pass | pass | pass | pass | —       |
-| acm           | —    | —    | —    | —    | —    | —    | —    | —    | —    | pass    |
+| Catalog            | main | 4.16 | 4.17 | 4.18 | 4.19 | 4.20 | 4.21 | 4.22 | 4.23 | shipped |
+| ------------------ | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ------- |
+| openshift (33)     | pass | pass | pass | pass | pass | pass | pass | pass | pass | —       |
+| better-gather (33) | pass | —    | —    | pass | pass | pass | pass | pass | pass | —       |
+| acm (10)           | —    | —    | —    | —    | —    | —    | —    | —    | —    | pass    |
 
 <!-- catalog-status:end -->
 

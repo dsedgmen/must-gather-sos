@@ -130,11 +130,14 @@ class TestCompatReport(unittest.TestCase):
             report = render_report(shipped_rows, compat)
 
             self.assertIn("#### Script compatibility", report)
-            self.assertIn("| fixture", report)
+            self.assertIn("fixture (", report)
+            self.assertNotIn("plugins exercised", report.lower())
             by_ref = {r["label"]: r["status"] for r in compat}
             self.assertEqual(by_ref["base"], "pass")
             self.assertEqual(by_ref["newer"], "pass")
             self.assertEqual(by_ref["weaker"], "pass")
+            for row in compat:
+                self.assertIn("plugins", row["notes"])
 
     def test_write_readme_is_surgical(self):
         before = (

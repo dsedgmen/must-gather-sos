@@ -1,7 +1,7 @@
 """Smoke-test that must-gather-sos can drive a given must-gather version.
 
 Builds a catalog from an upstream checkout (or uses a shipped one), generates
-the in-pod script for a small selection, and runs it through the same heredoc
+the in-pod script for **every** plugin, and runs it through the same heredoc
 mangling ``oc`` applies — against a fake image whose ``common.sh`` and
 ``gather_*`` stubs come from that version.
 
@@ -26,7 +26,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from must_gather_sos import runner, script  # noqa: E402
-from must_gather_sos.catalog import CORE, Catalog, build_selection  # noqa: E402
+from must_gather_sos.catalog import Catalog, build_selection  # noqa: E402
 
 OC_POD_COMMAND = """\
 set -e
@@ -57,6 +57,13 @@ VERSION_STUB = """\
 function version() { echo "compat-test"; }
 """
 
+FUNC_STUB = """\
+function {name}() {{
+  printf '%s\\t%s\\n' "{name}" "$*" >>"$RECORD/invocations"
+  return ${{STUB_RC:-0}}
+}}
+"""
+
 
 class CompatSandbox:
     """Minimal fake must-gather image for a compatibility smoke test."""
@@ -72,29 +79,52 @@ class CompatSandbox:
         if common_sh and os.path.isfile(common_sh):
             shutil.copyfile(common_sh, os.path.join(self.bin, "common.sh"))
         else:
-            # Profile may not need it (e.g. ACM); leave a no-op.
             with open(os.path.join(self.bin, "common.sh"), "w", encoding="utf-8") as fh:
                 fh.write("# no common.sh in this image family\n")
 
         self._write("version", VERSION_STUB)
         self._write("oc", OC_STUB)
+
+        function_stubs = []
+        for name, plugin in catalog.plugins.items():
+            if plugin.is_core or not plugin.script:
+                continue
+            if plugin.script.startswith("/"):
+                self._install_script_stub(plugin.script)
+            else:
+                function_stubs.append(plugin.script)
+
         # Profile libraries (common.sh already handled; gather_utils for ACM).
         for src in catalog.profile.source:
             base = os.path.basename(src)
             if base == "common.sh":
                 continue
-            path = os.path.join(self.bin, base)
+            rel = src[len("/usr/bin/"):] if src.startswith("/usr/bin/") else base
+            path = os.path.join(self.bin, rel)
             if not os.path.exists(path):
-                self._write(base, "#!/bin/bash\n# stub library\n")
-        for name, plugin in catalog.plugins.items():
-            if plugin.is_core:
-                continue
-            # Function-style scripts (ACM dump_hostedcluster) are not files.
-            if plugin.script and plugin.script.startswith("/"):
-                self._write(os.path.basename(plugin.script), STUB)
+                body = "#!/bin/bash\n# stub library\n"
+                if function_stubs:
+                    body += "\n" + "\n".join(
+                        FUNC_STUB.format(name=fn) for fn in function_stubs
+                    )
+                self._write(rel, body)
+            elif function_stubs:
+                with open(path, "a", encoding="utf-8") as fh:
+                    fh.write("\n")
+                    for fn in function_stubs:
+                        fh.write(FUNC_STUB.format(name=fn))
+
+    def _install_script_stub(self, script_path):
+        """Place a stub at the path the generated script will call after localise."""
+        if script_path.startswith("/usr/bin/"):
+            rel = script_path[len("/usr/bin/"):]
+        else:
+            rel = os.path.basename(script_path)
+        self._write(rel, STUB)
 
     def _write(self, name, content):
         path = os.path.join(self.bin, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(content)
         os.chmod(path, 0o755)
@@ -124,33 +154,48 @@ class CompatSandbox:
         shutil.rmtree(self.root, ignore_errors=True)
 
 
-def _pick_selection(catalog):
-    """A small, always-valid selection for the smoke test."""
-    names = [n for n in catalog.names if n != CORE]
-    if not names:
-        return build_selection(catalog, all_plugins=True)
-    # Prefer a default plugin if any; otherwise the first by sort order.
-    defaults = [n for n in names if catalog.get(n).default]
-    pick = sorted(defaults or names, key=catalog.sort_key)[:2]
-    if CORE in catalog.plugins:
-        pick = [CORE] + pick
-    return build_selection(catalog, only=",".join(pick))
+def _full_selection(catalog):
+    """Select every runnable plugin, supplying dummy -k values where required.
+
+    Superset plugins (``network_logs``, ACM ``all_logs``) re-run the whole
+    default gather and are left out — they are not an independent compatibility
+    surface.
+    """
+    names = []
+    raw_options = []
+    skipped = []
+    for name in catalog.names:
+        plugin = catalog.plugins[name]
+        if plugin.superset:
+            skipped.append(name)
+            continue
+        names.append(name)
+        if plugin.requires_option:
+            opt = sorted(plugin.options)[0]
+            raw_options.append(f"{name}.{opt}=compat-test")
+    selection = build_selection(
+        catalog, only=",".join(names), raw_options=raw_options or None,
+    )
+    return selection, skipped
 
 
 def smoke_test(catalog, common_sh=None):
-    """Run one generate+execute smoke test. Return (ok, detail)."""
+    """Generate+run the script for every runnable plugin. Return (ok, detail)."""
     sandbox = CompatSandbox(catalog, common_sh=common_sh)
     try:
-        selection = _pick_selection(catalog)
+        selection, skipped = _full_selection(catalog)
         text = script.generate(catalog, selection)
         proc = sandbox.run(sandbox.localise(text))
         if proc.returncode != 0:
             tail = (proc.stderr or proc.stdout or "").strip().splitlines()
             detail = tail[-1] if tail else f"exit {proc.returncode}"
-            return False, detail[:100]
-        return True, f"{len(selection.names)} plugins exercised"
+            return False, detail[:120]
+        detail = f"{len(selection.names)} plugins"
+        if skipped:
+            detail += f" (skip supersets: {','.join(skipped)})"
+        return True, detail
     except Exception as exc:  # noqa: BLE001 — reported as a table cell
-        return False, f"{type(exc).__name__}: {exc}"[:100]
+        return False, f"{type(exc).__name__}: {exc}"[:120]
     finally:
         sandbox.cleanup()
 

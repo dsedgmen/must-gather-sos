@@ -209,37 +209,23 @@ def _md_table(headers, body):
     return "\n".join(lines)
 
 
-def render_compat_table(compat):
-    """One row per (catalog, version) smoke test."""
-    headers = ["Catalog", "Version", "Result", "Plugins", "Notes"]
-    body = []
-    for row in compat:
-        body.append([
-            row["catalog"],
-            row["label"],
-            row["status"],
-            str(row["plugins"]),
-            (row["notes"] or "").replace("|", "\\|")[:80],
-        ])
-    return _md_table(headers, body)
-
-
 def render_matrix(shipped_rows, compat):
-    """Compact catalog × version matrix of pass/fail."""
+    """Catalog × version matrix: pass/fail for a full all-plugins smoke test."""
     labels = []
     for r in compat:
         if r["label"] not in labels:
             labels.append(r["label"])
-    catalogs = [r["catalog"] for r in shipped_rows]
     by_key = {(r["catalog"], r["label"]): r for r in compat}
+    plugins = {r["catalog"]: r["plugins"] for r in shipped_rows}
 
     if not labels:
         return "_No versions tested._"
 
     headers = ["Catalog"] + labels
     body = []
-    for name in catalogs:
-        cells = [name]
+    for row in shipped_rows:
+        name = row["catalog"]
+        cells = [f"{name} ({plugins.get(name, 0)})"]
         for label in labels:
             result = by_key.get((name, label))
             cells.append(result["status"] if result else "—")
@@ -247,19 +233,27 @@ def render_matrix(shipped_rows, compat):
     return _md_table(headers, body)
 
 
+def render_failures(compat):
+    bad = [r for r in compat if r["status"] in ("fail", "error")]
+    if not bad:
+        return ""
+    lines = ["", "Failures:", ""]
+    for r in bad:
+        note = (r.get("notes") or "").replace("|", "\\|")[:120]
+        lines.append(f"- `{r['catalog']}@{r['label']}`: {note}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def render_report(shipped_rows, compat):
     parts = [
         "#### Script compatibility",
         "",
-        "Does must-gather-sos still generate a working gather script against "
-        "each tracked must-gather version? (`pass` / `fail` / `error`)",
-        "",
-        render_compat_table(compat),
-        "",
-        "#### Compatibility matrix",
+        "Full generate+run of **every** plugin against each tracked "
+        "must-gather version (`pass` / `fail` / `error`).",
         "",
         render_matrix(shipped_rows, compat),
-        "",
+        render_failures(compat),
     ]
     return "\n".join(parts)
 
