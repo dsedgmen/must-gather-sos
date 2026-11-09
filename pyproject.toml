@@ -1,37 +1,6 @@
 [build-system]
-requires = ["setuptools>=61"]
+# RPM builds force --no-build-isolation and use the distro setuptools
+# (53.x on EL9). Metadata lives in setup.cfg so that works; keep the
+# floor low enough that isolated pip installs on EL9 can still resolve.
+requires = ["setuptools>=53"]
 build-backend = "setuptools.build_meta"
-
-[project]
-name = "must-gather-sos"
-version = "0.1.0"
-description = "An sos-style front end for 'oc adm must-gather': skip or select plugins"
-readme = "README.md"
-requires-python = ">=3.9"
-license = { text = "Apache-2.0" }
-authors = [{ name = "David Sedgmen" }]
-keywords = ["openshift", "must-gather", "sos", "sosreport", "support"]
-classifiers = [
-  "Environment :: Console",
-  "Intended Audience :: System Administrators",
-  "License :: OSI Approved :: Apache Software License",
-  "Programming Language :: Python :: 3",
-  "Topic :: System :: Systems Administration",
-]
-# No runtime dependencies: Python standard library only.
-dependencies = []
-
-[project.scripts]
-must-gather-sos = "must_gather_sos.cli:main"
-
-[project.urls]
-Homepage = "https://github.com/dsedgmen/must-gather-sos"
-
-[tool.setuptools.packages.find]
-include = ["must_gather_sos*"]
-
-[tool.setuptools.package-data]
-# The .sh is the sos-style progress library, read at generate time and
-# inlined into the script sent to the pod; without it nothing can be
-# generated, so it has to be installed, not just present in the checkout.
-must_gather_sos = ["data/*.json", "data/*.sh"]

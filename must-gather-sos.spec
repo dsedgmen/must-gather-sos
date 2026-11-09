@@ -1,12 +1,12 @@
 Name:           must-gather-sos
 Version:        0.1.0
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        An sos-style front end for 'oc adm must-gather'
 
 License:        Apache-2.0
 URL:            https://github.com/dsedgmen/must-gather-sos
 # Source tarball is produced from a git checkout by .copr/Makefile
-# (`git archive --prefix=%{name}-%{version}/ HEAD`); there is no upstream
+# (git archive --prefix=<name>-<version>/ HEAD); there is no upstream
 # release URL yet.
 Source0:        %{name}-%{version}.tar.gz
 
@@ -60,5 +60,8 @@ install -Dm644 share/completion/_must-gather-sos \
 %{_datadir}/zsh/site-functions/_must-gather-sos
 
 %changelog
+* Mon Nov 9 2026 David Sedgmen <dsedgmen@redhat.com> - 0.1.0-2
+- Ship setup.cfg so EL9 setuptools can build the wheel (was UNKNOWN-0.0.0).
+
 * Wed Oct 22 2026 Robin Cernin <rcernin@redhat.com> - 0.1.0-1
 - Initial packaging.
