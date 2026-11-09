@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-"""Regenerate must_gather_sos/data/openshift.json from openshift/must-gather.
+"""Regenerate openshift-layout catalogs from their upstream must-gather repos.
 
-Most of the catalog is *derived* from upstream's ``collection-scripts/gather``:
+Most of a catalog is *derived* from upstream's ``collection-scripts/gather``:
 which plugins exist, which of them the default run invokes, in what phase, with
 what arguments, and the three base ``oc adm inspect`` resource lists.  Anything
 that cannot be read off the source -- human descriptions, plugin options, the
 "this one re-runs everything" flag -- lives in the OVERLAY table below and is
 merged in at sync time.
 
+Which catalogs to sync, and from which repo/ref, is listed in
+``tools/catalogs.yaml``.
+
 Usage:
-    tools/sync_catalog.py                      # clone main into a temp dir
-    tools/sync_catalog.py --ref release-4.19
-    tools/sync_catalog.py --src /path/to/must-gather   # use an existing clone
+    tools/sync_catalog.py                         # every openshift-layout entry
+    tools/sync_catalog.py --catalog openshift
+    tools/sync_catalog.py --catalog openshift --ref release-4.19
+    tools/sync_catalog.py --catalog openshift --src /path/to/must-gather
 """
 
 from __future__ import annotations
@@ -26,10 +30,11 @@ import subprocess
 import sys
 import tempfile
 
-REPO = "https://github.com/openshift/must-gather.git"
+from catalog_registry import RegistryError, by_name, load_registry
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, os.pardir))
+DEFAULT_REPO = "https://github.com/openshift/must-gather.git"
 DEFAULT_OUT = os.path.join(ROOT, "must_gather_sos", "data", "openshift.json")
 
 #: Upstream files copied verbatim for the integration test to run against, so
@@ -330,14 +335,14 @@ def run(cmd, **kw):
     return subprocess.run(cmd, check=True, text=True, capture_output=True, **kw).stdout
 
 
-def fetch_source(ref, src):
+def fetch_source(ref, src, repo=DEFAULT_REPO):
     """Return (checkout_dir, commit, cleanup_dir_or_None)."""
     if src:
         commit = run(["git", "-C", src, "rev-parse", "HEAD"]).strip()
         return src, commit, None
     tmp = tempfile.mkdtemp(prefix="mgs-sync-")
-    print(f"cloning {REPO} @ {ref} ...", file=sys.stderr)
-    run(["git", "clone", "--depth", "1", "--branch", ref, REPO, tmp])
+    print(f"cloning {repo} @ {ref} ...", file=sys.stderr)
+    run(["git", "clone", "--depth", "1", "--branch", ref, repo, tmp])
     commit = run(["git", "-C", tmp, "rev-parse", "HEAD"]).strip()
     return tmp, commit, tmp
 
@@ -475,7 +480,8 @@ def discover_scripts(scripts_dir):
     return names
 
 
-def build_catalog(src, ref, commit, name="openshift", payload=True):
+def build_catalog(src, ref, commit, name="openshift", payload=True,
+                  repo=DEFAULT_REPO, image_match=None, version=None):
     scripts_dir = os.path.join(src, "collection-scripts")
     core, invocations = parse_gather(os.path.join(scripts_dir, "gather"))
     all_names = discover_scripts(scripts_dir)
@@ -487,19 +493,20 @@ def build_catalog(src, ref, commit, name="openshift", payload=True):
 
     plugins = {}
     order = 0
-    for name in all_names:
-        inv = invoked.get(name)
-        overlay = dict(OVERLAY.get(name, {}))
+    for plugin_name in all_names:
+        inv = invoked.get(plugin_name)
+        overlay = dict(OVERLAY.get(plugin_name, {}))
         if "description" not in overlay:
-            print(f"warning: no description in OVERLAY for '{name}'", file=sys.stderr)
+            print(f"warning: no description in OVERLAY for '{plugin_name}'",
+                  file=sys.stderr)
 
         plugin = {
-            "script": f"/usr/bin/gather_{name}",
+            "script": f"/usr/bin/gather_{plugin_name}",
             "default": inv is not None,
             "phase": "parallel" if (inv is None or inv["parallel"]) else "post",
-            "order": order if inv is None else list(invoked).index(name),
+            "order": order if inv is None else list(invoked).index(plugin_name),
             "description": overlay.pop("description", ""),
-            "since": classify_since(scripts_dir, f"gather_{name}"),
+            "since": classify_since(scripts_dir, f"gather_{plugin_name}"),
         }
         order += 1
 
@@ -523,26 +530,36 @@ def build_catalog(src, ref, commit, name="openshift", payload=True):
         if overlay_since and plugin["since"] == "none":
             plugin["since"] = overlay_since
         plugin.update(overlay)  # options, superset, requires_option
-        plugins[name] = plugin
+        plugins[plugin_name] = plugin
 
     stale = sorted(set(OVERLAY) - set(all_names))
     if stale:
-        print(f"warning: OVERLAY has entries for missing scripts: {stale}", file=sys.stderr)
+        print(f"warning: OVERLAY has entries for missing scripts: {stale}",
+              file=sys.stderr)
+
+    if image_match is None:
+        image_match = list(IMAGE_MATCH)
+
+    image = {
+        # The payload image oc picks when no --image is given, so no
+        # default of our own: naming one would break a disconnected
+        # cluster whose payload image is mirrored somewhere else.
+        "default": None,
+        "match": list(image_match),
+        "payload": payload,
+    }
+    # Release catalogs carry an explicit version so --image …:4.18 picks
+    # them; the main/payload catalog leaves this null and is the fallback.
+    if version:
+        image["version"] = version
 
     return {
         "catalog_version": 2,
         "name": name,
-        "image": {
-            # The payload image oc picks when no --image is given, so no
-            # default of our own: naming one would break a disconnected
-            # cluster whose payload image is mirrored somewhere else.
-            "default": None,
-            "match": IMAGE_MATCH,
-            "payload": payload,
-        },
+        "image": image,
         "profile": PROFILE,
         "source": {
-            "repo": REPO,
+            "repo": repo,
             "ref": ref,
             "commit": commit,
             "synced": datetime.datetime.now(datetime.timezone.utc)
@@ -560,49 +577,138 @@ def build_catalog(src, ref, commit, name="openshift", payload=True):
     }
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--ref", default="main", help="branch or tag of openshift/must-gather")
-    ap.add_argument("--src", help="use an existing checkout instead of cloning")
-    ap.add_argument("-o", "--out", default=os.path.normpath(DEFAULT_OUT))
-    ap.add_argument("--name", default="openshift",
-                    help="catalog name, used by --catalog NAME")
-    ap.add_argument("--payload", action="store_true", default=None,
-                    help="this catalog describes the cluster payload's "
-                         "own must-gather image, the one oc uses when "
-                         "--image is absent (default: true for the "
-                         "openshift catalog, false otherwise)")
-    args = ap.parse_args(argv)
-    if args.payload is None:
-        args.payload = args.name == "openshift"
+def _should_vendor(entry, ref, src):
+    """Only refresh vendored fixtures from the openshift payload (main) tree."""
+    if entry.get("family") != "openshift" and entry.get("name") != "openshift":
+        return False
+    # One common.sh in tests/data/upstream; keep it on the payload catalog.
+    return bool(entry.get("payload")) and ref in ("main", "master")
 
-    src, commit, cleanup = fetch_source(args.ref, args.src)
+
+def write_catalog(catalog, out):
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    with open(out, "w", encoding="utf-8") as fh:
+        json.dump(catalog, fh, indent=2, sort_keys=False)
+        fh.write("\n")
+    defaults = sum(1 for p in catalog["plugins"].values() if p["default"])
+    print(
+        f"wrote {out}: {len(catalog['plugins'])} plugins "
+        f"({defaults} default) from {catalog['source']['ref']} "
+        f"@ {catalog['source']['commit'][:12]}"
+    )
+
+
+def sync_entry(entry, ref=None, src=None):
+    """Clone/build/write one openshift-layout registry entry. Return catalog."""
+    if entry["sync"] != "openshift-layout":
+        raise SystemExit(
+            f"sync: catalog {entry['name']!r} is {entry['sync']}, not syncable"
+        )
+    ref = ref or entry["sync_ref"]
+    src_dir, commit, cleanup = fetch_source(ref, src, repo=entry["repo"])
     try:
-        catalog = build_catalog(src, args.ref, commit,
-                                name=args.name, payload=args.payload)
-        # Only refresh the vendored fixtures from the canonical upstream
-        # repo; syncing a fork must not overwrite them with the fork's copy.
-        vendor = args.src is None or args.ref in ("main", "master") or \
-            args.ref.startswith("release-")
-        for upstream_path, local_path in (VENDORED.items() if vendor else ()):
-            target = os.path.join(ROOT, local_path)
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            shutil.copyfile(os.path.join(src, upstream_path), target)
-            print(f"vendored {local_path}")
+        catalog = build_catalog(
+            src_dir, ref, commit,
+            name=entry["name"],
+            payload=bool(entry.get("payload")),
+            repo=entry["repo"],
+            image_match=entry.get("image_match"),
+            version=entry.get("version"),
+        )
+        if _should_vendor(entry, ref, src):
+            for upstream_path, local_path in VENDORED.items():
+                target = os.path.join(ROOT, local_path)
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                shutil.copyfile(os.path.join(src_dir, upstream_path), target)
+                print(f"vendored {local_path}")
     finally:
         if cleanup:
             shutil.rmtree(cleanup, ignore_errors=True)
 
-    with open(args.out, "w", encoding="utf-8") as fh:
-        json.dump(catalog, fh, indent=2, sort_keys=False)
-        fh.write("\n")
+    write_catalog(catalog, entry["out"])
+    return catalog
 
-    defaults = sum(1 for p in catalog["plugins"].values() if p["default"])
-    print(
-        f"wrote {args.out}: {len(catalog['plugins'])} plugins "
-        f"({defaults} default) from {args.ref} @ {commit[:12]}"
-    )
-    return 0
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--catalog",
+                    help="sync only this registry entry (default: every "
+                         "openshift-layout entry)")
+    ap.add_argument("--ref",
+                    help="override the entry's sync_ref (single --catalog only)")
+    ap.add_argument("--src",
+                    help="use an existing checkout instead of cloning "
+                         "(single --catalog only)")
+    ap.add_argument("--registry", default=None,
+                    help="path to catalogs.yaml (default: tools/catalogs.yaml)")
+    # Legacy one-shot flags kept so existing make sync-catalog REF=... works
+    # when --catalog is omitted and we fall back to the openshift entry.
+    ap.add_argument("-o", "--out", help=argparse.SUPPRESS)
+    ap.add_argument("--name", help=argparse.SUPPRESS)
+    ap.add_argument("--payload", action="store_true", default=None,
+                    help=argparse.SUPPRESS)
+    args = ap.parse_args(argv)
+
+    try:
+        entries = load_registry(args.registry)
+    except (OSError, RegistryError) as exc:
+        print(f"sync: {exc}", file=sys.stderr)
+        return 2
+
+    def _prepare(entry):
+        from catalog_registry import catalog_name_for, out_path_for, version_label
+        entry = dict(entry)
+        if args.out:
+            entry["out"] = os.path.normpath(args.out)
+        if args.name:
+            entry["name"] = args.name
+        if args.payload is not None:
+            entry["payload"] = args.payload
+        if args.ref and args.ref != entry.get("sync_ref"):
+            # Retarget name/out/version so `make sync-catalog REF=release-4.19`
+            # updates openshift-4.19.json instead of the payload catalog.
+            family = entry.get("family") or entry["name"]
+            label = version_label(args.ref)
+            entry["sync_ref"] = args.ref
+            entry["version"] = None if label == "main" else label
+            if not args.name:
+                entry["name"] = catalog_name_for(family, args.ref)
+            if not args.out:
+                entry["out"] = out_path_for(family, args.ref)
+            if label != "main" and args.payload is None:
+                entry["payload"] = False
+        return entry
+
+    if args.catalog:
+        try:
+            entry = by_name(entries, args.catalog)
+        except RegistryError as exc:
+            print(f"sync: {exc}", file=sys.stderr)
+            return 2
+        sync_entry(_prepare(entry), ref=args.ref, src=args.src)
+        return 0
+
+    if args.ref or args.src or args.out or args.name is not None:
+        # Back-compat: bare `sync_catalog.py --ref X` still means openshift.
+        try:
+            entry = by_name(entries, "openshift")
+        except RegistryError as exc:
+            print(f"sync: {exc}", file=sys.stderr)
+            return 2
+        sync_entry(_prepare(entry), ref=args.ref, src=args.src)
+        return 0
+
+    rc = 0
+    for entry in entries:
+        if entry["sync"] != "openshift-layout":
+            print(f"skip {entry['name']}: sync={entry['sync']}", file=sys.stderr)
+            continue
+        try:
+            sync_entry(entry)
+        except (SystemExit, subprocess.CalledProcessError, OSError) as exc:
+            print(f"sync: {entry['name']}: {exc}", file=sys.stderr)
+            rc = 1
+    return rc
 
 
 if __name__ == "__main__":

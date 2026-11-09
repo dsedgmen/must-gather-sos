@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# stub insights — no since plumbing
+echo insights

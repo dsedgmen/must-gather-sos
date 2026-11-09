@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+named_resources+=(ns/default ns/openshift)
+group_resources+=(nodes clusterversion)
+all_ns_resources+=(leases)
+/usr/bin/gather_etcd &
+/usr/bin/gather_monitoring &
+wait "${pids[@]}"
+/usr/bin/gather_insights

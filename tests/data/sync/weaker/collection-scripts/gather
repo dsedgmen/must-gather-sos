@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+named_resources+=(ns/default)
+group_resources+=(nodes)
+all_ns_resources+=(leases)
+/usr/bin/gather_etcd &
+wait "${pids[@]}"
+/usr/bin/gather_insights

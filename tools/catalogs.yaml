@@ -1,0 +1,60 @@
+# Registry of must-gather catalogs we ship and the upstream refs we
+# track. tools/sync_catalog.py and tools/catalog_status.py both read this.
+#
+# sync:
+#   openshift-layout  -- parse collection-scripts/gather (auto)
+#   manual            -- hand-written JSON; listed but never regenerated
+#
+# Each openshift-layout entry expands to one shipped catalog per ref in
+# ``versions``:
+#   main / master  →  must_gather_sos/data/<name>.json
+#   release-X.Y    →  must_gather_sos/data/<name>-X.Y.json
+#
+# Runtime picks the catalog from the --image tag (4.18 → openshift-4.18);
+# the payload catalog (``payload_ref``) is used when --image is absent or
+# the tag does not name a shipped version.
+
+catalogs:
+  - name: openshift
+    sync: openshift-layout
+    repo: https://github.com/openshift/must-gather.git
+    # Only this family's payload_ref catalog claims oc's default image.
+    payload: true
+    payload_ref: main
+    versions:
+      - main
+      - release-4.16
+      - release-4.17
+      - release-4.18
+      - release-4.19
+      - release-4.20
+      - release-4.21
+      - release-4.22
+      - release-4.23
+    # Matched as case-insensitive substrings of the image repository path.
+    # The tag then selects which versioned catalog is used.
+    image_match:
+      - origin-must-gather
+      - openshift/must-gather
+      - ose-must-gather
+
+  - name: better-gather
+    sync: openshift-layout
+    # Fork of openshift/must-gather that applies the --since window to file
+    # collection itself. Tracks the same release lines as the fork publishes.
+    repo: https://github.com/dsedgmen/better-gather.git
+    versions:
+      - main
+      - release-4.18
+      - release-4.19
+      - release-4.20
+      - release-4.21
+      - release-4.22
+      - release-4.23
+    # Select by --catalog name; no image substring of its own.
+    image_match: []
+
+  - name: acm
+    sync: manual
+    repo: https://github.com/stolostron/must-gather.git
+    out: must_gather_sos/data/acm.json

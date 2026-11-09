@@ -1,0 +1,17 @@
+catalogs:
+  - name: fixture
+    sync: openshift-layout
+    repo: https://example.com/must-gather.git
+    sync_ref: base
+    check_refs:
+      - base
+      - newer
+      - weaker
+    out: must_gather_sos/data/fixture.json
+    payload: true
+    image_match:
+      - fixture-must-gather
+  - name: hand
+    sync: manual
+    repo: https://example.com/hand.git
+    out: must_gather_sos/data/hand.json

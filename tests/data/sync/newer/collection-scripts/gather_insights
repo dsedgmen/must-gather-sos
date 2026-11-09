@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# uses since_common helpers
+filter_names_since "$@"
+echo "${log_collection_args}"

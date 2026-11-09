@@ -1,0 +1,93 @@
+name: Catalog compatibility
+
+# Smoke-test must-gather-sos against every tracked must-gather version.
+# Runs on every push/PR (not only main) so the badge and tables stay alive
+# on feature branches too.
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Offline script-compat tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install tools dependencies
+        run: python3 -m pip install pyyaml
+
+      - name: Fixture sync + script smoke tests
+        run: python3 -m unittest tests.test_catalog_sync -v
+
+      - name: Every shipped catalog still loads
+        run: python3 -m unittest tests.test_catalog.TestEveryShippedCatalog -v
+
+  upstream:
+    name: Upstream script compatibility
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install tools dependencies
+        run: python3 -m pip install pyyaml
+
+      - name: Smoke-test against each tracked upstream ref
+        id: compat
+        run: |
+          set +e
+          if [ "${{ github.ref }}" = "refs/heads/main" ] && \
+             [ "${{ github.event_name }}" != "pull_request" ]; then
+            python3 tools/catalog_status.py --write-readme | tee catalog-status.md
+          else
+            python3 tools/catalog_status.py | tee catalog-status.md
+          fi
+          rc=$?
+          set -e
+          {
+            echo "## Script compatibility"
+            echo
+            echo "must-gather-sos generate+run smoke tests against each ref in \`tools/catalogs.yaml\`."
+            echo
+            cat catalog-status.md
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      - name: Commit README status tables
+        if: >-
+          always()
+          && github.ref == 'refs/heads/main'
+          && github.event_name != 'pull_request'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if git diff --staged --quiet; then
+            echo "README status tables unchanged"
+            exit 0
+          fi
+          git commit -m "Refresh catalog status tables in README [skip ci]"
+          git push
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: catalog-status
+          path: catalog-status.md

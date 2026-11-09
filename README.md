@@ -1,5 +1,35 @@
 # must-gather-sos
 
+| Check | Status |
+| ----- | ------ |
+| Tests (unit + RPM) | [![RPM build](https://github.com/dsedgmen/must-gather-sos/actions/workflows/rpm-build.yml/badge.svg)](https://github.com/dsedgmen/must-gather-sos/actions/workflows/rpm-build.yml) |
+| Script compatibility | [![Catalog compatibility](https://github.com/dsedgmen/must-gather-sos/actions/workflows/catalog-compat.yml/badge.svg)](https://github.com/dsedgmen/must-gather-sos/actions/workflows/catalog-compat.yml) |
+| Security scan | [![Security scan](https://github.com/dsedgmen/must-gather-sos/actions/workflows/security.yml/badge.svg)](https://github.com/dsedgmen/must-gather-sos/actions/workflows/security.yml) |
+
+| COPR distro | Build |
+| ----------- | ----- |
+| el9 | [![el9](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcopr.fedorainfracloud.org%2Fapi_3%2Fmonitor%3Fownername%3Ddsedgmen%26projectname%3Dmust-gather-sos&query=%24.packages%5B0%5D.chroots%5B%22epel-9-x86_64%22%5D.state&label=el9)](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/epel-9-x86_64/) |
+| el10 | [![el10](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcopr.fedorainfracloud.org%2Fapi_3%2Fmonitor%3Fownername%3Ddsedgmen%26projectname%3Dmust-gather-sos&query=%24.packages%5B0%5D.chroots%5B%22epel-10-x86_64%22%5D.state&label=el10)](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/epel-10-x86_64/) |
+| Fedora 43 | [![f43](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcopr.fedorainfracloud.org%2Fapi_3%2Fmonitor%3Fownername%3Ddsedgmen%26projectname%3Dmust-gather-sos&query=%24.packages%5B0%5D.chroots%5B%22fedora-43-x86_64%22%5D.state&label=f43)](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/fedora-43-x86_64/) |
+| Fedora 44 | [![f44](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcopr.fedorainfracloud.org%2Fapi_3%2Fmonitor%3Fownername%3Ddsedgmen%26projectname%3Dmust-gather-sos&query=%24.packages%5B0%5D.chroots%5B%22fedora-44-x86_64%22%5D.state&label=f44)](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/fedora-44-x86_64/) |
+| Fedora 45 | [![f45](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcopr.fedorainfracloud.org%2Fapi_3%2Fmonitor%3Fownername%3Ddsedgmen%26projectname%3Dmust-gather-sos&query=%24.packages%5B0%5D.chroots%5B%22fedora-45-x86_64%22%5D.state&label=f45)](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/fedora-45-x86_64/) |
+
+<!-- catalog-status:start -->
+
+#### Script compatibility
+
+Each cell is the shipped catalog for that image version: full generate+run of every plugin (`pass` / `fail` / `error`). Runtime picks the catalog from the `--image` tag.
+
+| Catalog | main | 4.16 | 4.17 | 4.18 | 4.19 | 4.20 | 4.21 | 4.22 | 4.23 | shipped |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **openshift** (33) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | — |
+| **better-gather** (33) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | — | — | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | — |
+| **acm** (10) | — | — | — | — | — | — | — | — | — | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) |
+
+<!-- catalog-status:end -->
+
+Install from COPR with `dnf copr enable dsedgmen/must-gather-sos`.
+
 > **Disclaimer:** This is an independent, personal project. It is **not
 > provided, maintained, or supported by Red Hat**, and comes with **no
 > warranty or support** of any kind. Use at your own risk.
@@ -263,14 +293,17 @@ $ must-gather-sos \
     -n monitoring --jobs 4
 ```
 
-Each image needs a catalog, and one is chosen by matching the reference
-against the catalogs listed by `--list-catalogs`. If none matches, say which
-describes it:
+Each image needs a catalog. The repository path picks the family
+(openshift vs acm); the **image tag** picks the release catalog
+(`:4.18` → `openshift-4.18`). When the tag does not name a release
+(`latest`, digest, untagged) — or when `--image` is omitted — the catalog
+for the **cluster's OpenShift version** is used. See `--list-catalogs`.
 
 | you write | you get |
 |---|---|
-| nothing | the cluster's own payload image, `openshift` catalog |
-| `--image IMG` | the catalog whose pattern matches `IMG` |
+| nothing | payload image + catalog for the cluster version (e.g. `openshift-4.18`) |
+| `--image …/origin-must-gather:4.18` | `openshift-4.18` |
+| `--image …/origin-must-gather:latest` | catalog for the cluster version |
 | `--catalog NAME` | that catalog, and its default image if it has one |
 | `--catalog NAME --image IMG` | they pair — the long-standing fork workflow |
 | `--catalog IMG=NAME` | pins `NAME` to `IMG`; repeatable |
@@ -403,8 +436,10 @@ Four things follow from that:
   is no-ops on any given cluster — the operator simply is not installed — and
   `no-op` says so rather than leaving you to guess from silence.
 - **A script the image does not have is `missing`, not `failed`.** That is
-  `rc=127`, and it means the catalog and the image are from different
-  releases; the summary says so and suggests the matching `--image`.
+  `rc=127`. With a tagged `--image` this should be rare — the matching
+  release catalog is selected automatically. It still happens for digests /
+  `latest` (main fallback) against an older image; the summary lists them
+  and suggests pinning the matching tag or `-n`.
 - **A slow task does not look like a hang.** Every 30 seconds
   (`TASK_HEARTBEAT`) the run says what is still going and for how long.
 
@@ -525,26 +560,43 @@ archive: must-gather-04123456-20261016T153045Z.tar.xz (182.4 MiB)
 ## The plugin catalog
 
 Plugin names, the default set, execution phases, per-plugin arguments and the
-`core` resource lists all come from a JSON catalog at
-`must_gather_sos/data/openshift.json`, generated from upstream by parsing
-`collection-scripts/gather`:
+`core` resource lists all come from JSON catalogs under
+`must_gather_sos/data/`, generated from upstream by parsing
+`collection-scripts/gather`. We ship **one catalog per supported release**
+(`openshift.json`, `openshift-4.18.json`, …) so `--image …:4.18` drives the
+4.18 plugin set, not main's. The family, versions, and upstream repos live in
+[`tools/catalogs.yaml`](tools/catalogs.yaml).
 
 ```console
-$ make sync-catalog              # from main
+$ make sync-catalogs             # every version of every auto-syncable family
+$ make sync-catalog              # openshift main (payload) only
 $ make sync-catalog REF=release-4.19
+$ make catalog-status            # smoke-test every shipped catalog
+$ make catalog-check             # same check; non-zero on any fail/error
 ```
 
-The catalog is committed, so `--list-plugins` and `--dry-run` work offline and
+Catalogs are committed, so `--list-plugins` and `--dry-run` work offline and
 every resync is a reviewable diff. Human descriptions and plugin option specs
 live in the `OVERLAY` table in `tools/sync_catalog.py` and are merged in at
-sync time.
+sync time. ACM is hand-written (`sync: manual` in the registry) because its
+gather entrypoint has no `named_resources` arrays for the openshift-layout
+parser.
 
-Point at a different catalog with `--catalog PATH`. A second catalog ships
-for [better-gather](https://github.com/dsedgmen/better-gather), a fork of
-must-gather that applies the window to file collection itself:
+Compatibility of each shipped catalog is exercised in CI
+(`.github/workflows/catalog-compat.yml`): offline fixture tests on every PR,
+plus a live matrix that smoke-tests every versioned catalog and prints the
+badge table into the job summary (also uploaded as `catalog-status`).
 
 ```console
-$ must-gather-sos --catalog must_gather_sos/data/better-gather.json \
+$ must-gather-sos --list-catalogs
+```
+
+Point at a different catalog with `--catalog NAME` or `--catalog PATH`. A
+second catalog ships for [better-gather](https://github.com/dsedgmen/better-gather),
+a fork of must-gather that applies the window to file collection itself:
+
+```console
+$ must-gather-sos --catalog better-gather \
       --image <better-gather-image> --run-namespace <ns> -o audit_logs --since 30m
 ```
 
@@ -558,9 +610,11 @@ window to select between.
 ## Development
 
 ```console
-$ make check      # compile-check, shellcheck, bash -n, unit tests
+$ make check           # compile-check, shellcheck, bash -n, unit tests
 $ make test
-$ make golden     # regenerate golden script fixtures after an intended change
+$ make golden          # regenerate golden script fixtures after an intended change
+$ make sync-catalogs   # refresh every auto-syncable catalog from upstream
+$ make catalog-status  # print shipped-catalog + upstream-coverage tables
 ```
 
 The tests need neither a cluster nor network access.
@@ -591,8 +645,9 @@ The tests need neither a cluster nor network access.
 - No ACS support; see above.
 - The catalog is a snapshot. If your cluster's must-gather image is much newer
   than the last sync, a brand-new plugin will be missing from the list; the
-  base inspect may also miss a newly added resource type. `make sync-catalog`
-  fixes both.
+  base inspect may also miss a newly added resource type. `make sync-catalogs`
+  refreshes every auto-syncable catalog; `make catalog-status` shows which
+  release branches the shipped catalogs still cover.
 - Skipping plugins does not make the base inspect smaller. If `core` dominates
   your collection size, `--since` and `--reduce-logs` are the levers.
 - `ok` versus `no-op` is a heuristic: a task is a no-op when it exits zero and
