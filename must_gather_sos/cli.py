@@ -215,6 +215,12 @@ def parse_jobs(values):
     return default, per_image
 
 
+def _cluster_version(args):
+    """Best-effort X.Y from the live cluster; None when oc cannot answer."""
+    raw = runner.cluster_version(getattr(args, "oc", None) or "oc")
+    return catalog_mod.version_from_tag(raw) if raw else None
+
+
 def build_targets(args, reduce_logs):
     """Pair every image in this run with the catalog that describes it.
 
@@ -238,11 +244,26 @@ def build_targets(args, reduce_logs):
         )
 
     images = list(args.image)
+    # Cluster version fills in when the image tag does not name a release
+    # (:latest, digest, untagged) or when --image is omitted entirely.
+    need_cluster_ver = not images or any(
+        image not in pinned
+        and not (loose and len(images) == 1)
+        and not catalog_mod.version_from_tag(
+            catalog_mod.split_image_ref(image)[1]
+        )
+        for image in images
+    )
+    cluster_ver = _cluster_version(args) if need_cluster_ver else None
+
     if not images:
         # No --image: oc runs the cluster's own payload image. One loose
         # --catalog may still redirect which catalog describes it, which is
         # how the better-gather fork has always been selected.
-        catalog = Catalog.load(loose[0]) if loose else Catalog.load()
+        if loose:
+            catalog = Catalog.load(loose[0])
+        else:
+            catalog = catalog_mod.catalog_for_payload(cluster_ver)
         return [_target(catalog, None, args, reduce_logs,
                         default_jobs, image_jobs)]
 
@@ -259,7 +280,7 @@ def build_targets(args, reduce_logs):
         elif loose:
             catalogs.append((image, Catalog.load(loose[0])))
         else:
-            catalogs.append((image, _catalog_for_image(image)))
+            catalogs.append((image, _catalog_for_image(image, cluster_ver)))
 
     # Selection flags are global: a name has to exist in *some* selected
     # catalog, and simply does not apply to the images that lack it.
@@ -297,8 +318,8 @@ def build_targets(args, reduce_logs):
     return targets
 
 
-def _catalog_for_image(image):
-    return catalog_mod.catalog_for_image(image)
+def _catalog_for_image(image, cluster_version=None):
+    return catalog_mod.catalog_for_image(image, cluster_version=cluster_version)
 
 
 def _target(catalog, image, args, reduce_logs, default_jobs, image_jobs,
@@ -537,9 +558,12 @@ def _run(args):
         return list_catalogs()
 
     # The listing modes describe one catalog; a pinned --catalog IMAGE=NAME
-    # has no meaning there, so take the plain one.
-    catalog = Catalog.load(_split_pin(args.catalog[0])[1]
-                           if args.catalog else None)
+    # has no meaning there, so take the plain one. With no --catalog, prefer
+    # the cluster's release catalog (same default a real run would use).
+    if args.catalog:
+        catalog = Catalog.load(_split_pin(args.catalog[0])[1])
+    else:
+        catalog = catalog_mod.catalog_for_payload(_cluster_version(args))
 
     if args.list_plugin_names:
         print("\n".join(sorted(catalog.names)))

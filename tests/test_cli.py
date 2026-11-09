@@ -388,11 +388,26 @@ class TestTargets(unittest.TestCase):
         with captured():
             return cli.build_targets(argparse.Namespace(**defaults), None)
 
-    def test_no_image_uses_the_payload_catalog(self):
-        targets = self.targets()
+    def test_no_image_uses_the_cluster_version_catalog(self):
+        with mock.patch("must_gather_sos.runner.cluster_version",
+                        return_value="4.19.5"):
+            targets = self.targets()
         self.assertEqual(len(targets), 1)
-        self.assertEqual(targets[0].catalog.name, "openshift")
+        self.assertEqual(targets[0].catalog.name, "openshift-4.19")
         self.assertIsNone(targets[0].image_ref)
+
+    def test_no_image_falls_back_to_payload_when_offline(self):
+        with mock.patch("must_gather_sos.runner.cluster_version",
+                        return_value=None):
+            targets = self.targets()
+        self.assertEqual(targets[0].catalog.name, "openshift")
+
+    def test_latest_tag_uses_the_cluster_version(self):
+        with mock.patch("must_gather_sos.runner.cluster_version",
+                        return_value="4.20.1"):
+            targets = self.targets(
+                image=["quay.io/openshift/origin-must-gather:latest"])
+        self.assertEqual(targets[0].catalog.name, "openshift-4.20")
 
     def test_an_image_picks_its_catalog_by_reference(self):
         targets = self.targets(image=[self.ACM])
@@ -401,7 +416,7 @@ class TestTargets(unittest.TestCase):
     def test_two_images_give_two_targets(self):
         targets = self.targets(image=[self.OPENSHIFT, self.ACM])
         self.assertEqual([t.catalog.name for t in targets],
-                         ["openshift", "acm"])
+                         ["openshift-4.18", "acm"])
 
     def test_a_lone_catalog_still_pairs_with_a_lone_image(self):
         # The documented fork workflow: --catalog better-gather --image <own>.
@@ -435,9 +450,9 @@ class TestTargets(unittest.TestCase):
         targets = self.targets(image=[self.OPENSHIFT, self.ACM],
                                skip_plugins="monitoring,dr_logs")
         selected = {t.catalog.name: t.selection.names for t in targets}
-        self.assertNotIn("monitoring", selected["openshift"])
+        self.assertNotIn("monitoring", selected["openshift-4.18"])
         self.assertNotIn("dr_logs", selected["acm"])
-        self.assertIn("etcd", selected["openshift"])
+        self.assertIn("etcd", selected["openshift-4.18"])
         self.assertIn("hub_logs", selected["acm"])
 
     def test_a_name_in_no_catalog_is_still_an_error(self):
@@ -450,13 +465,13 @@ class TestTargets(unittest.TestCase):
         # -o etcd means nothing to ACM; collect from OpenShift only.
         targets = self.targets(image=[self.OPENSHIFT, self.ACM],
                                only_plugins="etcd")
-        self.assertEqual([t.catalog.name for t in targets], ["openshift"])
+        self.assertEqual([t.catalog.name for t in targets], ["openshift-4.18"])
 
     def test_jobs_defaults_and_per_image_overrides(self):
         targets = self.targets(image=[self.OPENSHIFT, self.ACM],
                                jobs=["4", f"{self.ACM}=2"])
         self.assertEqual({t.catalog.name: t.jobs for t in targets},
-                         {"openshift": 4, "acm": 2})
+                         {"openshift-4.18": 4, "acm": 2})
 
     def test_the_same_image_twice_is_refused(self):
         with self.assertRaises(UserError) as ctx:

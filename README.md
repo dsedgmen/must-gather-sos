@@ -295,14 +295,15 @@ $ must-gather-sos \
 
 Each image needs a catalog. The repository path picks the family
 (openshift vs acm); the **image tag** picks the release catalog
-(`:4.18` → `openshift-4.18`). Untagged refs, digests, and unknown tags fall
-back to the family's payload/main catalog. See `--list-catalogs`.
+(`:4.18` → `openshift-4.18`). When the tag does not name a release
+(`latest`, digest, untagged) — or when `--image` is omitted — the catalog
+for the **cluster's OpenShift version** is used. See `--list-catalogs`.
 
 | you write | you get |
 |---|---|
-| nothing | the cluster's own payload image, `openshift` (main) catalog |
+| nothing | payload image + catalog for the cluster version (e.g. `openshift-4.18`) |
 | `--image …/origin-must-gather:4.18` | `openshift-4.18` |
-| `--image …/origin-must-gather:latest` | `openshift` (main fallback) |
+| `--image …/origin-must-gather:latest` | catalog for the cluster version |
 | `--catalog NAME` | that catalog, and its default image if it has one |
 | `--catalog NAME --image IMG` | they pair — the long-standing fork workflow |
 | `--catalog IMG=NAME` | pins `NAME` to `IMG`; repeatable |

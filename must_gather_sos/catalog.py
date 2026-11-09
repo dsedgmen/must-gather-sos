@@ -359,13 +359,69 @@ def describe_catalogs():
     return rows
 
 
-def catalog_for_image(image):
+def _version_key(version):
+    """Comparable tuple for an ``X.Y`` version string."""
+    try:
+        return tuple(int(part) for part in version.split(".")[:2])
+    except (TypeError, ValueError):
+        return ()
+
+
+def _pick_versioned(family, wanted):
+    """Exact version match, else newest shipped release that is still ≤ wanted."""
+    if not wanted:
+        return None
+    exact = [c for c in family if c.image.version == wanted]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        names = ", ".join(sorted(c.name for c in exact))
+        raise UserError(
+            f"{names} all claim version {wanted}; "
+            "pick one with --catalog NAME"
+        )
+    wanted_key = _version_key(wanted)
+    if not wanted_key:
+        return None
+    older = [
+        c for c in family
+        if c.image.version and _version_key(c.image.version)
+        and _version_key(c.image.version) <= wanted_key
+    ]
+    if not older:
+        return None
+    older.sort(key=lambda c: _version_key(c.image.version))
+    return older[-1]
+
+
+def _payload_fallback(family):
+    fallback = [c for c in family if c.image.payload]
+    if not fallback:
+        fallback = [c for c in family if not c.image.version]
+    if len(fallback) == 1:
+        return fallback[0]
+    if not fallback:
+        names = ", ".join(sorted(c.name for c in family))
+        raise UserError(
+            f"{names} recognise this image family but none is a payload/main "
+            "fallback; pick one with --catalog NAME"
+        )
+    names = ", ".join(sorted(c.name for c in fallback))
+    raise UserError(
+        f"{names} all claim this image family; pick one with --catalog NAME"
+    )
+
+
+def catalog_for_image(image, cluster_version=None):
     """Pick the shipped catalog that describes *image*.
 
-    Path patterns select the family (openshift vs acm); the image tag then
-    picks the matching release catalog (``:4.18`` → ``openshift-4.18``).
-    Digests, ``latest``, and unknown tags fall back to the family's payload
-    catalog when one exists, else its unversioned/main catalog.
+    Path patterns select the family (openshift vs acm). Preference order for
+    the release catalog:
+
+    1. version parsed from the image tag (``:4.18`` → ``openshift-4.18``)
+    2. the cluster's OpenShift version (for ``:latest``, digests, untagged,
+       and the payload image when ``--image`` is omitted)
+    3. the family's payload / main catalog
     """
     family = []
     for path in registry().values():
@@ -380,34 +436,24 @@ def catalog_for_image(image):
             "--list-catalogs."
         )
 
-    wanted = version_from_tag(split_image_ref(image)[1])
-    if wanted:
-        versioned = [c for c in family if c.image.version == wanted]
-        if len(versioned) == 1:
-            return versioned[0]
-        if len(versioned) > 1:
-            names = ", ".join(sorted(c.name for c in versioned))
-            raise UserError(
-                f"{names} all claim {image!r} at version {wanted}; "
-                f"pick one with --catalog {image}=NAME"
-            )
+    tag_version = version_from_tag(split_image_ref(image)[1])
+    cluster_ver = version_from_tag(cluster_version) if cluster_version else None
+    wanted = tag_version or cluster_ver
 
-    fallback = [c for c in family if c.image.payload]
-    if not fallback:
-        fallback = [c for c in family if not c.image.version]
-    if len(fallback) == 1:
-        return fallback[0]
-    if not fallback:
-        names = ", ".join(sorted(c.name for c in family))
-        raise UserError(
-            f"{names} recognise {image!r} but none is a payload/main "
-            f"fallback; pick one with --catalog {image}=NAME"
-        )
-    names = ", ".join(sorted(c.name for c in fallback))
-    raise UserError(
-        f"{names} all claim the image {image!r}; "
-        f"pick one with --catalog {image}=NAME"
-    )
+    chosen = _pick_versioned(family, wanted)
+    if chosen is not None:
+        return chosen
+    return _payload_fallback(family)
+
+
+#: Synthetic ref used when ``--image`` is omitted: matches the OpenShift
+#: family so catalog selection can apply the cluster-version default.
+PAYLOAD_IMAGE_REF = "openshift/origin-must-gather"
+
+
+def catalog_for_payload(cluster_version=None):
+    """Catalog for oc's default (cluster payload) must-gather image."""
+    return catalog_for_image(PAYLOAD_IMAGE_REF, cluster_version=cluster_version)
 
 
 def _name_from_path(path):

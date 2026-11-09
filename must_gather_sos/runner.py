@@ -138,6 +138,24 @@ def probe(oc, argv, timeout=30):
     return proc.stdout.strip()
 
 
+def cluster_version(oc="oc"):
+    """Return the cluster's desired version string (e.g. ``4.18.3``), or None.
+
+    Soft-fails: offline dry-runs and missing credentials simply get no version
+    so catalog selection can fall back to the payload/main catalog.
+    """
+    raw = probe(oc, [
+        "get", "clusterversion", "version",
+        "-o", "jsonpath={.status.desired.version}",
+    ])
+    if not raw:
+        raw = probe(oc, [
+            "get", "clusterversion", "version",
+            "-o", "jsonpath={.status.history[0].version}",
+        ])
+    return raw or None
+
+
 #: Lines oc prints that say nothing about the collection.
 #:
 #: Two sources, neither of which the must-gather image can do anything about:

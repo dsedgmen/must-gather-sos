@@ -318,6 +318,16 @@ class TestImageMatching(unittest.TestCase):
                 self.assertEqual(chosen.name, "openshift")
                 self.assertTrue(chosen.image.payload)
 
+    def test_cluster_version_selects_release_when_tag_has_none(self):
+        from must_gather_sos.catalog import catalog_for_image, catalog_for_payload
+        chosen = catalog_for_image(
+            "quay.io/openshift/origin-must-gather:latest",
+            cluster_version="4.21.0",
+        )
+        self.assertEqual(chosen.name, "openshift-4.21")
+        self.assertEqual(
+            catalog_for_payload("4.17.12").name, "openshift-4.17")
+
 
 if __name__ == "__main__":
     unittest.main()
