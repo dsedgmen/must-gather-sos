@@ -1,6 +1,6 @@
 Name:           must-gather-sos
 Version:        0.1.0
-Release:        3%{?dist}
+Release:        4%{?dist}
 Summary:        An sos-style front end for 'oc adm must-gather'
 
 License:        Apache-2.0
@@ -17,9 +17,6 @@ BuildRequires:  python3-pip
 BuildRequires:  python3-setuptools
 BuildRequires:  python3-wheel
 BuildRequires:  pyproject-rpm-macros
-# tools/catalog_registry.py (pulled in by tests.test_catalog_sync) reads
-# tools/catalogs.yaml; not a runtime dependency of the installed package.
-BuildRequires:  python3-pyyaml
 
 # %%check exercises the in-pod progress library (data/task_common.sh) by
 # running it, so the shell tools it uses have to be in the buildroot.
@@ -54,7 +51,19 @@ install -Dm644 share/completion/_must-gather-sos \
     %{buildroot}%{_datadir}/zsh/site-functions/_must-gather-sos
 
 %check
-%{python3} -m unittest discover -s tests -t .
+# Package unit tests only. tests.test_catalog_sync exercises tools/
+# (PyYAML, git clones) and belongs in .github/workflows/catalog-compat.yml.
+%{python3} - <<'PY'
+import pathlib, unittest
+loader = unittest.TestLoader()
+suite = unittest.TestSuite()
+for path in sorted(pathlib.Path("tests").glob("test_*.py")):
+    if path.name == "test_catalog_sync.py":
+        continue
+    suite.addTests(loader.loadTestsFromName(f"tests.{path.stem}"))
+result = unittest.TextTestRunner(verbosity=1).run(suite)
+raise SystemExit(0 if result.wasSuccessful() else 1)
+PY
 
 %files -f %{pyproject_files}
 %{_bindir}/must-gather-sos
@@ -63,6 +72,9 @@ install -Dm644 share/completion/_must-gather-sos \
 %{_datadir}/zsh/site-functions/_must-gather-sos
 
 %changelog
+* Mon Nov 9 2026 David Sedgmen <dsedgmen@redhat.com> - 0.1.0-4
+- Keep tools/catalog tests out of %%check; they run in catalog-compat CI.
+
 * Mon Nov 9 2026 David Sedgmen <dsedgmen@redhat.com> - 0.1.0-3
 - BuildRequires python3-pyyaml so %%check can import tools/catalog_registry.
 
