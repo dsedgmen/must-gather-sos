@@ -548,7 +548,7 @@ class TestMultiImageRun(unittest.TestCase):
         doc = self.read(os.path.join(self.dest, manifest.MANIFEST_NAME))
         self.assertEqual(
             {i["catalog"]: i["output_dir"] for i in doc["images"]},
-            {"openshift": os.path.basename(self.dirs["openshift"]),
+            {"openshift-4.18": os.path.basename(self.dirs["openshift"]),
              "acm": os.path.basename(self.dirs["acm"])},
         )
         # The tally is every image's results added up.
@@ -557,7 +557,7 @@ class TestMultiImageRun(unittest.TestCase):
 
     def test_failures_are_reported_against_the_image_they_came_from(self):
         _, _, err = self.run_collect()
-        self.assertIn("[openshift]", err)
+        self.assertIn("[openshift-4.18]", err)
         self.assertIn("[acm]", err)
         self.assertIn("failed: etcd rc=1", err)
 
