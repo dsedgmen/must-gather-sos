@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+oc adm inspect ${log_collection_args} ns/foo

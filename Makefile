@@ -6,16 +6,20 @@ REF     ?= main
 # (needs setuptools already present, which it usually is on a distro python).
 PIP_FLAGS ?=
 
-.PHONY: help test lint check golden sync-catalog man install uninstall clean
+.PHONY: help test lint check golden sync-catalog sync-catalogs \
+	catalog-status catalog-check man install uninstall clean
 
 help:
-	@echo "make test           run the unit tests"
-	@echo "make lint           compile-check the sources, shellcheck the generated scripts"
-	@echo "make check          lint + test"
-	@echo "make golden         regenerate the golden script fixtures"
-	@echo "make sync-catalog   regenerate the plugin catalog (REF=$(REF))"
-	@echo "make man            preview the man page"
-	@echo "make install        install to PREFIX=$(PREFIX)"
+	@echo "make test            run the unit tests"
+	@echo "make lint            compile-check the sources, shellcheck the generated scripts"
+	@echo "make check           lint + test"
+	@echo "make golden          regenerate the golden script fixtures"
+	@echo "make sync-catalog    regenerate the openshift catalog (REF=$(REF))"
+	@echo "make sync-catalogs   regenerate every auto-syncable catalog"
+	@echo "make catalog-status  drift-check all tracked refs; refresh README table"
+	@echo "make catalog-check   drift-check only; fail on drift (no README write)"
+	@echo "make man             preview the man page"
+	@echo "make install         install to PREFIX=$(PREFIX)"
 
 test:
 	$(PYTHON) -m unittest discover -s tests -t . -v
@@ -41,8 +45,18 @@ golden:
 	@git --no-pager diff --stat -- tests/data/golden || true
 
 sync-catalog:
-	$(PYTHON) tools/sync_catalog.py --ref $(REF)
+	$(PYTHON) tools/sync_catalog.py --catalog openshift --ref $(REF)
 	@git --no-pager diff --stat -- must_gather_sos/data || true
+
+sync-catalogs:
+	$(PYTHON) tools/sync_catalog.py
+	@git --no-pager diff --stat -- must_gather_sos/data || true
+
+catalog-status:
+	$(PYTHON) tools/catalog_status.py --write-readme
+
+catalog-check:
+	$(PYTHON) tools/catalog_status.py
 
 man:
 	man -l share/man/must-gather-sos.1

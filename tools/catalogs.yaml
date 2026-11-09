@@ -1,0 +1,57 @@
+# Registry of must-gather catalogs we ship and the upstream refs we
+# track for compatibility. tools/sync_catalog.py and tools/catalog_status.py
+# both read this file.
+#
+# sync:
+#   openshift-layout  -- parse collection-scripts/gather (auto)
+#   manual            -- hand-written JSON; listed but never regenerated
+#
+# sync_ref is what we commit into out/. check_refs are the versions the
+# compatibility matrix compares the shipped catalog against.
+
+catalogs:
+  - name: openshift
+    sync: openshift-layout
+    repo: https://github.com/openshift/must-gather.git
+    sync_ref: main
+    check_refs:
+      - main
+      - release-4.16
+      - release-4.17
+      - release-4.18
+      - release-4.19
+      - release-4.20
+      - release-4.21
+      - release-4.22
+      - release-4.23
+    out: must_gather_sos/data/openshift.json
+    payload: true
+    # Matched as case-insensitive substrings of the image repository path.
+    image_match:
+      - origin-must-gather
+      - openshift/must-gather
+      - ose-must-gather
+
+  - name: better-gather
+    sync: openshift-layout
+    # Fork of openshift/must-gather that applies the --since window to file
+    # collection itself. Tracks the same release lines as the fork publishes.
+    repo: https://github.com/dsedgmen/better-gather.git
+    sync_ref: main
+    check_refs:
+      - main
+      - release-4.18
+      - release-4.19
+      - release-4.20
+      - release-4.21
+      - release-4.22
+      - release-4.23
+    out: must_gather_sos/data/better-gather.json
+    payload: false
+    # Select by --catalog name; no image substring of its own.
+    image_match: []
+
+  - name: acm
+    sync: manual
+    repo: https://github.com/stolostron/must-gather.git
+    out: must_gather_sos/data/acm.json
