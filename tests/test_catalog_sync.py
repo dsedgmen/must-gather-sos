@@ -130,8 +130,9 @@ class TestCompatReport(unittest.TestCase):
             report = render_report(shipped_rows, compat)
 
             self.assertIn("#### Script compatibility", report)
-            self.assertIn("fixture (", report)
-            self.assertNotIn("plugins exercised", report.lower())
+            self.assertIn("**fixture** (", report)
+            self.assertIn("img.shields.io/badge/pass-", report)
+            self.assertNotIn("| pass |", report)
             by_ref = {r["label"]: r["status"] for r in compat}
             self.assertEqual(by_ref["base"], "pass")
             self.assertEqual(by_ref["newer"], "pass")

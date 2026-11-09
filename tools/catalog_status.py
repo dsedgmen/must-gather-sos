@@ -190,27 +190,41 @@ def collect_status(entries, src_map=None):
     return shipped_rows, compat
 
 
+# shields.io static badges for the README matrix (same look as the CI/COPR
+# badges above). Kept as plain markdown so GitHub renders them without JS.
+_STATUS_BADGE = {
+    "pass": (
+        "![pass](https://img.shields.io/badge/pass-2ea44f"
+        "?style=flat-square)"
+    ),
+    "fail": (
+        "![fail](https://img.shields.io/badge/fail-d73a4a"
+        "?style=flat-square)"
+    ),
+    "error": (
+        "![error](https://img.shields.io/badge/error-e36209"
+        "?style=flat-square)"
+    ),
+}
+def _status_badge(status):
+    """Badge for a real result; plain em-dash when that catalog has no check."""
+    if status is None:
+        return "—"
+    return _STATUS_BADGE.get(status, status)
+
+
 def _md_table(headers, body):
-    widths = [len(h) for h in headers]
-    for cells in body:
-        for i, cell in enumerate(cells):
-            widths[i] = max(widths[i], len(cell))
-
-    def fmt(cells):
-        return "| " + " | ".join(
-            c.ljust(widths[i]) for i, c in enumerate(cells)
-        ) + " |"
-
+    """Markdown table without column padding (badge URLs dominate width)."""
     lines = [
-        fmt(headers),
-        "| " + " | ".join("-" * w for w in widths) + " |",
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
     ]
-    lines.extend(fmt(cells) for cells in body)
+    lines.extend("| " + " | ".join(cells) + " |" for cells in body)
     return "\n".join(lines)
 
 
 def render_matrix(shipped_rows, compat):
-    """Catalog × version matrix: pass/fail for a full all-plugins smoke test."""
+    """Catalog × version matrix of status badges for the all-plugins smoke test."""
     labels = []
     for r in compat:
         if r["label"] not in labels:
@@ -225,10 +239,10 @@ def render_matrix(shipped_rows, compat):
     body = []
     for row in shipped_rows:
         name = row["catalog"]
-        cells = [f"{name} ({plugins.get(name, 0)})"]
+        cells = [f"**{name}** ({plugins.get(name, 0)})"]
         for label in labels:
             result = by_key.get((name, label))
-            cells.append(result["status"] if result else "—")
+            cells.append(_status_badge(result["status"] if result else None))
         body.append(cells)
     return _md_table(headers, body)
 

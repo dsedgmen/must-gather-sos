@@ -20,11 +20,11 @@
 
 Full generate+run of **every** plugin against each tracked must-gather version (`pass` / `fail` / `error`).
 
-| Catalog            | main | 4.16 | 4.17 | 4.18 | 4.19 | 4.20 | 4.21 | 4.22 | 4.23 | shipped |
-| ------------------ | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ------- |
-| openshift (33)     | pass | pass | pass | pass | pass | pass | pass | pass | pass | —       |
-| better-gather (33) | pass | —    | —    | pass | pass | pass | pass | pass | pass | —       |
-| acm (10)           | —    | —    | —    | —    | —    | —    | —    | —    | —    | pass    |
+| Catalog | main | 4.16 | 4.17 | 4.18 | 4.19 | 4.20 | 4.21 | 4.22 | 4.23 | shipped |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **openshift** (33) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | — |
+| **better-gather** (33) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | — | — | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | — |
+| **acm** (10) | — | — | — | — | — | — | — | — | — | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) |
 
 <!-- catalog-status:end -->
 
