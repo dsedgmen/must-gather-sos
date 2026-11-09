@@ -38,6 +38,7 @@ CASES = [
      None, 0),
     ("odf-defaults.sh", "odf", {}, None, 0),
     ("odf-dr.sh", "odf", {"only": "dr,ceph"}, None, 0),
+    ("better-gather-odf-defaults.sh", "better-gather-odf", {}, None, 0),
 ]
 
 

@@ -1,0 +1,124 @@
+{
+  "catalog_version": 2,
+  "name": "better-gather-odf",
+  "comment": [
+    "Unofficial fork of red-hat-storage/odf-must-gather from",
+    "github.com/dsedgmen/better-gather-odf — sibling of better-gather.",
+    "",
+    "Same leaf gather_* plugins as the stock ODF catalog. The fork's change is",
+    "gather_ceph_logs: host directories are copied through copy_pod_dir_since",
+    "(vendored since_common.sh) so --since actually bounds the Ceph/CSI log",
+    "trees. Stock ODF already fed LOG_FILTER_ARGS / JCTL_FILTER_ARGS to inspect",
+    "and journalctl; the gap was the rsync of whole /var/log/ceph and CSI dirs.",
+    "",
+    "Not a Red Hat product. Hand written (sync: manual), like odf.json."
+  ],
+  "image": {
+    "default": "ghcr.io/dsedgmen/better-gather-odf:latest",
+    "match": [
+      "better-gather-odf"
+    ],
+    "payload": false
+  },
+  "profile": {
+    "id": "better-gather-odf",
+    "detect": "[ -f /usr/bin/since_common.sh ] && [ -f /usr/bin/gather_ceph_resources ]",
+    "base_path": "/must-gather",
+    "source": [
+      "/usr/bin/utils.sh"
+    ],
+    "setup": [
+      "export BASE_COLLECTION_PATH=/must-gather",
+      "mkdir -p \"${BASE_COLLECTION_PATH}\"",
+      "parse_since_time",
+      "pre-install.sh \"${BASE_COLLECTION_PATH}\" || true"
+    ],
+    "version": {
+      "banner": "dsedgmen/better-gather-odf (unofficial)",
+      "command": null
+    },
+    "since": true,
+    "reduce_logs": false,
+    "noop_pattern": "[Ss]kipping|[Nn]ot (detected|found|present)|exiting|Scale cluster CRDs not detected|Storage Cluster is not present|NAMESPACES is empty"
+  },
+  "source": {
+    "repo": "https://github.com/dsedgmen/better-gather-odf.git",
+    "ref": "main",
+    "commit": "af19b9cd23cb558f5fcc3a406946cb99d253e23d",
+    "synced": "2026-11-09T05:14:30+00:00"
+  },
+  "plugins": {
+    "namespaced": {
+      "script": "/usr/bin/gather_namespaced_resources",
+      "default": true,
+      "phase": "parallel",
+      "order": 1,
+      "description": "Namespaced ODF/OCS resources in the operator and product namespaces (storage CRs, objectbuckets, …). Upstream flag: -ns / --namespaced; also part of -o / --odf.",
+      "since": "pod-logs"
+    },
+    "clusterscoped": {
+      "script": "/usr/bin/gather_clusterscoped_resources",
+      "default": true,
+      "phase": "parallel",
+      "order": 2,
+      "description": "Cluster-scoped storage objects: PVs, storageclasses, CSI drivers, SCCs, volume replication/snapshot classes, nodes. Upstream flag: -cs / --clusterscoped; also part of -o / --odf.",
+      "since": "none"
+    },
+    "noobaa": {
+      "script": "/usr/bin/gather_noobaa_resources",
+      "default": true,
+      "phase": "parallel",
+      "order": 3,
+      "description": "MultiCloud Gateway / NooBaa: noobaa CRs, backingstores, bucketclasses, OBCs, and noobaa CLI status. Upstream flag: -n / --noobaa.",
+      "since": "pod-logs"
+    },
+    "ceph_logs": {
+      "script": "/usr/bin/gather_ceph_logs",
+      "default": true,
+      "phase": "parallel",
+      "order": 4,
+      "description": "Ceph daemon, CSI, kernel, journal and crash logs from debug pods. better-gather-odf bounds the host directory copies with copy_pod_dir_since when --since is set. Upstream flag: -cl / --ceph-logs; also part of -o / --odf.",
+      "since": "files"
+    },
+    "ceph": {
+      "script": "/usr/bin/gather_ceph_pod_logs",
+      "default": true,
+      "phase": "parallel",
+      "order": 5,
+      "description": "Ceph commands and pod logs (gather_ceph_resources / gather_common_ceph_resources). Skips or limits collection for external and MCG-only clusters. Upstream flag: -c / --ceph; also part of -o / --odf.",
+      "since": "pod-logs"
+    },
+    "dr": {
+      "script": "/usr/bin/gather_dr_resources",
+      "default": true,
+      "phase": "parallel",
+      "order": 6,
+      "description": "Regional disaster recovery namespaces and resources (openshift-dr-system, …). No-ops when no DR namespaces exist. Upstream flag: -d / --dr.",
+      "since": "none"
+    },
+    "provider": {
+      "script": "/usr/bin/gather_odf_client",
+      "default": true,
+      "phase": "parallel",
+      "order": 7,
+      "description": "ODF client / provider-consumer: ocs-client-operator namespaces, storageclients, storageclaims, CSI driver state. Upstream flag: -pc / --provider.",
+      "since": "none"
+    },
+    "cnsa": {
+      "script": "/usr/bin/gather_cnsa",
+      "default": true,
+      "phase": "parallel",
+      "order": 8,
+      "description": "IBM Spectrum Scale (CNSA) nested must-gather. Exits without collecting when Scale CRDs are absent. Upstream flag: -cn / --cnsa.",
+      "since": "none"
+    },
+    "minimal": {
+      "script": "/usr/bin/gather_minimal_resources",
+      "default": false,
+      "phase": "parallel",
+      "order": 9,
+      "description": "Small set of storagecluster-related CRs and CSVs for a quick look. Upstream flag: -m / --minimal.",
+      "since": "pod-logs"
+    }
+  }
+}

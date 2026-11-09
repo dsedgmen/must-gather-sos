@@ -4,7 +4,7 @@
   "image": {
     "default": null,
     "match": [
-      "better-gather"
+      "better-gather$"
     ],
     "payload": false,
     "version": "4.22"

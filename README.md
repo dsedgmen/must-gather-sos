@@ -401,7 +401,26 @@ $ must-gather-sos --catalog odf -o namespaced,clusterscoped,dr --since 2h
 
 `--since` reaches ODF through `utils.sh` (`LOG_FILTER_ARGS` /
 `JCTL_FILTER_ARGS`). `--reduce-logs` does nothing here — there is no
-`compress_logs`.
+`compress_logs`. Stock ODF still rsyncs whole Ceph/CSI host directories for
+`ceph_logs`; for a fork that actually bounds those trees see
+[better-gather-odf](https://github.com/dsedgmen/better-gather-odf) below.
+
+### better-gather-odf
+
+Unofficial sibling of [better-gather](https://github.com/dsedgmen/better-gather)
+for ODF: same plugins as the stock catalog, but `gather_ceph_logs` uses
+`copy_pod_dir_since` so `--since` bounds the host directory copies. Images
+publish to `ghcr.io/dsedgmen/better-gather-odf` (private packages; needs a
+pull secret — see that repo's README).
+
+```console
+$ must-gather-sos --image ghcr.io/dsedgmen/better-gather-odf:4.18 \
+      --run-namespace must-gather-run --since 30m
+$ must-gather-sos --catalog better-gather-odf -o ceph_logs --since 2h
+```
+
+`ceph_logs` is classified `files` here (stock ODF keeps `journal`). Not a
+Red Hat product.
 
 ACS is **not** supported. There is no official Red Hat ACS must-gather image;
 the documented route is `roxctl central debug download-diagnostics`, a
@@ -599,7 +618,7 @@ $ make catalog-check             # same check; non-zero on any fail/error
 Catalogs are committed, so `--list-plugins` and `--dry-run` work offline and
 every resync is a reviewable diff. Human descriptions and plugin option specs
 live in the `OVERLAY` table in `tools/sync_catalog.py` and are merged in at
-sync time. ACM and ODF are hand-written (`sync: manual` in the registry)
+sync time. ACM, ODF, and better-gather-odf are hand-written (`sync: manual` in the registry)
 because their gather entrypoints are not the openshift-layout
 `named_resources` form the sync tool parses.
 
@@ -617,10 +636,10 @@ second catalog ships for [better-gather](https://github.com/dsedgmen/better-gath
 a fork of must-gather that applies the window to file collection itself:
 
 ```console
-$ must-gather-sos --image quay.io/example/better-gather:4.20 \
+$ must-gather-sos --image ghcr.io/dsedgmen/better-gather:4.20 \
       --run-namespace <ns> -o audit_logs --since 30m
 $ must-gather-sos --catalog better-gather \
-      --image quay.io/example/better-gather --run-namespace <ns> -o audit_logs --since 30m
+      --image ghcr.io/dsedgmen/better-gather --run-namespace <ns> -o audit_logs --since 30m
 ```
 
 Against that image the `--since` warnings correctly go away for the plugins

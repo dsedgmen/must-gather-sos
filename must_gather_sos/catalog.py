@@ -167,11 +167,24 @@ class Image:
         host and the tag or digest are dropped first, so a mirrored registry
         and a pinned digest both still match. Version selection among the
         matching family is done by ``catalog_for_image``.
+
+        A pattern ending in ``$`` is end-anchored on a path component, so
+        ``better-gather$`` matches ``…/better-gather`` but not
+        ``…/better-gather-odf``. Plain patterns stay substrings so
+        ``odf-must-gather`` still matches ``odf-must-gather-rhel9``.
         """
         if not ref:
             return False
         path, _tag = split_image_ref(ref)
-        return any(pattern in path for pattern in self.match)
+        path = path.lower()
+        for pattern in self.match:
+            if pattern.endswith("$"):
+                stem = pattern[:-1]
+                if path == stem or path.endswith("/" + stem):
+                    return True
+            elif pattern in path:
+                return True
+        return False
 
 
 class Plugin:

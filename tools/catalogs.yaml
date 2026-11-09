@@ -51,9 +51,9 @@ catalogs:
       - release-4.21
       - release-4.22
       - release-4.23
-    # Distinct image name (quay.io/.../better-gather:…); not origin-must-gather.
+    # End-anchored so this does not also claim better-gather-odf / -cnv.
     image_match:
-      - better-gather
+      - better-gather$
 
   - name: acm
     sync: manual
@@ -68,3 +68,12 @@ catalogs:
     image_match:
       - odf-must-gather
       - ocs-must-gather
+
+  - name: better-gather-odf
+    sync: manual
+    # Sibling of better-gather: ODF fork that bounds gather_ceph_logs with
+    # copy_pod_dir_since. Same plugin set as odf; ceph_logs since=files.
+    repo: https://github.com/dsedgmen/better-gather-odf.git
+    out: must_gather_sos/data/better-gather-odf.json
+    image_match:
+      - better-gather-odf
