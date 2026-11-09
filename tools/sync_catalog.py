@@ -338,7 +338,12 @@ def run(cmd, **kw):
 def fetch_source(ref, src, repo=DEFAULT_REPO):
     """Return (checkout_dir, commit, cleanup_dir_or_None)."""
     if src:
-        commit = run(["git", "-C", src, "rev-parse", "HEAD"]).strip()
+        # Fixture trees and plain checkouts may not be git repos (and RPM
+        # buildroots may not even ship git). Prefer HEAD when available.
+        try:
+            commit = run(["git", "-C", src, "rev-parse", "HEAD"]).strip()
+        except (OSError, subprocess.CalledProcessError, SystemExit):
+            commit = f"local-{ref}"
         return src, commit, None
     tmp = tempfile.mkdtemp(prefix="mgs-sync-")
     print(f"cloning {repo} @ {ref} ...", file=sys.stderr)
