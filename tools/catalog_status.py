@@ -34,7 +34,7 @@ from urllib.parse import urlparse
 
 from catalog_registry import RegistryError, load_registry
 from script_compat import common_sh_for, smoke_test_from_doc
-from sync_catalog import build_catalog, fetch_source
+from sync_catalog import fetch_source
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, os.pardir))
@@ -76,32 +76,49 @@ def _src_for(entry, ref, src_map):
     return src_map.get(f"{entry['name']}={ref}") or src_map.get(entry["name"])
 
 
-def check_version(entry, ref, src_map=None):
-    """Clone/build/smoke-test one upstream ref. Return a result dict."""
+def check_shipped(entry, src_map=None):
+    """Smoke-test the shipped catalog for one registry entry."""
+    family = entry.get("family") or entry["name"]
+    ref = entry.get("sync_ref") or "main"
+    if entry["sync"] == "manual":
+        label = "shipped"
+    else:
+        label = entry.get("version") or _short_ref(ref)
+
     result = {
-        "catalog": entry["name"],
+        "catalog": family,
+        "name": entry["name"],
         "ref": ref,
-        "label": _short_ref(ref),
-        "is_sync_ref": ref == entry.get("sync_ref"),
+        "label": label,
+        "is_sync_ref": True,
         "status": "error",
         "plugins": 0,
         "commit": "",
         "notes": "",
     }
+
+    try:
+        shipped = _load_json(entry["out"])
+    except (OSError, ValueError) as exc:
+        result["notes"] = f"cannot read shipped catalog: {exc}"
+        return result
+
+    result["plugins"] = len(shipped.get("plugins") or {})
+    result["commit"] = ((shipped.get("source") or {}).get("commit") or "")[:12]
+
+    if entry["sync"] == "manual":
+        ok, detail = smoke_test_from_doc(shipped, common_sh=None)
+        result["status"] = "pass" if ok else "fail"
+        result["notes"] = detail
+        return result
+
     src = _src_for(entry, ref, src_map)
     cleanup = None
     try:
-        src_dir, commit, cleanup = fetch_source(ref, src, repo=entry["repo"])
-        doc = build_catalog(
-            src_dir, ref, commit,
-            name=entry["name"],
-            payload=bool(entry.get("payload")),
-            repo=entry["repo"],
-            image_match=entry.get("image_match"),
+        src_dir, _commit, cleanup = fetch_source(ref, src, repo=entry["repo"])
+        ok, detail = smoke_test_from_doc(
+            shipped, common_sh=common_sh_for(src_dir),
         )
-        result["plugins"] = len(doc.get("plugins") or {})
-        result["commit"] = commit
-        ok, detail = smoke_test_from_doc(doc, common_sh=common_sh_for(src_dir))
         result["status"] = "pass" if ok else "fail"
         result["notes"] = detail
     except (SystemExit, subprocess.CalledProcessError, OSError, ValueError) as exc:
@@ -117,77 +134,34 @@ def check_version(entry, ref, src_map=None):
 
 
 def collect_status(entries, src_map=None):
-    """Return (shipped_rows, compat_results)."""
-    shipped_rows = []
-    compat = []
+    """Return (family_rows, compat_results) for the README matrix."""
+    compat = [check_shipped(entry, src_map=src_map) for entry in entries]
 
-    for entry in entries:
-        try:
-            shipped = _load_json(entry["out"])
-        except (OSError, ValueError) as exc:
-            shipped_rows.append({
-                "catalog": entry["name"],
-                "sync": entry.get("sync", "?"),
-                "upstream": _short_repo(entry["repo"]),
-                "ref": entry.get("sync_ref") or "—",
-                "plugins": 0,
-                "status": "error",
-                "notes": f"cannot read shipped catalog: {exc}",
-            })
+    family_rows = []
+    seen = set()
+    for entry, result in zip(entries, compat):
+        family = entry.get("family") or entry["name"]
+        if family in seen:
             continue
-
-        source = shipped.get("source") or {}
-        if entry["sync"] == "manual":
-            # Smoke-test the shipped manual catalog once (no upstream clone).
-            ok, detail = smoke_test_from_doc(shipped, common_sh=None)
-            # ACM needs gather_utils; without a real image tree the smoke may
-            # still generate+run if stubs cover /usr/bin scripts. Function
-            # plugins are skipped in the sandbox.
-            status = "pass" if ok else "fail"
-            shipped_rows.append({
-                "catalog": entry["name"],
-                "sync": "manual",
-                "upstream": _short_repo(entry["repo"]),
-                "ref": source.get("ref") or "—",
-                "plugins": len(shipped.get("plugins") or {}),
-                "status": status,
-                "notes": detail,
-            })
-            compat.append({
-                "catalog": entry["name"],
-                "ref": source.get("ref") or "shipped",
-                "label": "shipped",
-                "is_sync_ref": True,
-                "status": status,
-                "plugins": len(shipped.get("plugins") or {}),
-                "commit": (source.get("commit") or "")[:12],
-                "notes": detail,
-            })
-            continue
-
-        refs = list(entry.get("check_refs") or [])
-        sync_ref = entry.get("sync_ref")
-        if sync_ref and sync_ref not in refs:
-            refs.insert(0, sync_ref)
-
-        sync_result = None
-        for ref in refs:
-            result = check_version(entry, ref, src_map=src_map)
-            compat.append(result)
-            if result["is_sync_ref"]:
-                sync_result = result
-
-        shipped_rows.append({
-            "catalog": entry["name"],
-            "sync": "auto",
+        seen.add(family)
+        # Prefer the payload/main catalog's plugin count for the row label.
+        plugins = result["plugins"]
+        for other, other_result in zip(entries, compat):
+            if (other.get("family") or other["name"]) != family:
+                continue
+            if other.get("payload") or not other.get("version"):
+                plugins = other_result["plugins"]
+                break
+        family_rows.append({
+            "catalog": family,
+            "sync": entry.get("sync", "?"),
             "upstream": _short_repo(entry["repo"]),
-            "ref": sync_ref or "—",
-            "plugins": len(shipped.get("plugins") or {}),
-            "status": (sync_result or {}).get("status", "error"),
-            "notes": (sync_result or {}).get("notes", ""),
+            "plugins": plugins,
+            "status": result["status"],
+            "notes": result["notes"],
         })
 
-    return shipped_rows, compat
+    return family_rows, compat
 
 
 # shields.io static badges for the README matrix (same look as the CI/COPR
@@ -254,7 +228,8 @@ def render_failures(compat):
     lines = ["", "Failures:", ""]
     for r in bad:
         note = (r.get("notes") or "").replace("|", "\\|")[:120]
-        lines.append(f"- `{r['catalog']}@{r['label']}`: {note}")
+        name = r.get("name") or r["catalog"]
+        lines.append(f"- `{name}` ({r['label']}): {note}")
     lines.append("")
     return "\n".join(lines)
 
@@ -263,8 +238,9 @@ def render_report(shipped_rows, compat):
     parts = [
         "#### Script compatibility",
         "",
-        "Full generate+run of **every** plugin against each tracked "
-        "must-gather version (`pass` / `fail` / `error`).",
+        "Each cell is the shipped catalog for that image version: full "
+        "generate+run of every plugin (`pass` / `fail` / `error`). "
+        "Runtime picks the catalog from the `--image` tag.",
         "",
         render_matrix(shipped_rows, compat),
         render_failures(compat),

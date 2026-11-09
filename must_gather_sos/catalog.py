@@ -12,6 +12,7 @@ from __future__ import annotations
 import difflib
 import json
 import os
+import re
 
 from . import UserError
 
@@ -111,6 +112,38 @@ class Profile:
         return f"<Profile {self.id}>"
 
 
+def split_image_ref(ref):
+    """Return ``(repository_path, tag_or_None)`` for an image reference.
+
+    Digests (``@sha256:…``) yield a null tag. Registry hosts are stripped so
+    callers compare path substrings the same way ``Image.matches`` does.
+    """
+    if not ref:
+        return "", None
+    has_digest = "@" in ref
+    path = ref.split("@", 1)[0]
+    head, _, tail = path.partition("/")
+    if "." in head or ":" in head or head == "localhost":
+        path = tail or path
+    tag = None
+    if not has_digest and ":" in path.rsplit("/", 1)[-1]:
+        path, tag = path.rsplit(":", 1)
+    return path.lower(), tag
+
+
+def version_from_tag(tag):
+    """Pull a ``X.Y`` release version out of an image tag, or None.
+
+    Accepts ``4.18``, ``v4.18``, ``4.18.3``, ``release-4.18``, and similar.
+    Tags like ``latest`` yield None so the payload/main catalog remains the
+    fallback.
+    """
+    if not tag:
+        return None
+    m = re.search(r"(\d+\.\d+)", tag)
+    return m.group(1) if m else None
+
+
 class Image:
     """Which must-gather image(s) a catalog describes."""
 
@@ -121,23 +154,23 @@ class Image:
         # True for the catalog describing the cluster payload's own image,
         # the one oc runs when --image is absent.
         self.payload = bool(spec.get("payload", False))
+        # Release line this catalog was built for, e.g. "4.18". Null on the
+        # main/payload catalog, which is the fallback when the image tag
+        # does not name a shipped version.
+        self.version = spec.get("version")
 
     def matches(self, ref):
-        """Does *ref* name an image this catalog describes?
+        """Does *ref* name an image this catalog's *family* describes?
 
         Substrings of the repository path, not regexes: a malformed pattern
         in a data file is a traceback a long way from whoever wrote it. The
         host and the tag or digest are dropped first, so a mirrored registry
-        and a pinned digest both still match.
+        and a pinned digest both still match. Version selection among the
+        matching family is done by ``catalog_for_image``.
         """
         if not ref:
             return False
-        path = ref.split("@", 1)[0]
-        head, _, tail = path.partition("/")
-        if "." in head or ":" in head or head == "localhost":
-            path = tail or path          # drop a registry host
-        path = path.rsplit(":", 1)[0]    # drop the tag
-        path = path.lower()
+        path, _tag = split_image_ref(ref)
         return any(pattern in path for pattern in self.match)
 
 
@@ -319,10 +352,62 @@ def describe_catalogs():
             "images": list(catalog.image.match),
             "default_image": catalog.image.default,
             "payload": catalog.image.payload,
+            "version": catalog.image.version,
             "plugins": len(catalog.plugins),
             "ref": catalog.source.get("ref"),
         })
     return rows
+
+
+def catalog_for_image(image):
+    """Pick the shipped catalog that describes *image*.
+
+    Path patterns select the family (openshift vs acm); the image tag then
+    picks the matching release catalog (``:4.18`` → ``openshift-4.18``).
+    Digests, ``latest``, and unknown tags fall back to the family's payload
+    catalog when one exists, else its unversioned/main catalog.
+    """
+    family = []
+    for path in registry().values():
+        catalog = Catalog.load(path)
+        if catalog.image.matches(image):
+            family.append(catalog)
+
+    if not family:
+        raise UserError(
+            f"no built-in catalog recognises the image {image!r}. Say which "
+            f"describes it with --catalog {image}=NAME, or see "
+            "--list-catalogs."
+        )
+
+    wanted = version_from_tag(split_image_ref(image)[1])
+    if wanted:
+        versioned = [c for c in family if c.image.version == wanted]
+        if len(versioned) == 1:
+            return versioned[0]
+        if len(versioned) > 1:
+            names = ", ".join(sorted(c.name for c in versioned))
+            raise UserError(
+                f"{names} all claim {image!r} at version {wanted}; "
+                f"pick one with --catalog {image}=NAME"
+            )
+
+    fallback = [c for c in family if c.image.payload]
+    if not fallback:
+        fallback = [c for c in family if not c.image.version]
+    if len(fallback) == 1:
+        return fallback[0]
+    if not fallback:
+        names = ", ".join(sorted(c.name for c in family))
+        raise UserError(
+            f"{names} recognise {image!r} but none is a payload/main "
+            f"fallback; pick one with --catalog {image}=NAME"
+        )
+    names = ", ".join(sorted(c.name for c in fallback))
+    raise UserError(
+        f"{names} all claim the image {image!r}; "
+        f"pick one with --catalog {image}=NAME"
+    )
 
 
 def _name_from_path(path):

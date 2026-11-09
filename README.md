@@ -18,7 +18,7 @@
 
 #### Script compatibility
 
-Full generate+run of **every** plugin against each tracked must-gather version (`pass` / `fail` / `error`).
+Each cell is the shipped catalog for that image version: full generate+run of every plugin (`pass` / `fail` / `error`). Runtime picks the catalog from the `--image` tag.
 
 | Catalog | main | 4.16 | 4.17 | 4.18 | 4.19 | 4.20 | 4.21 | 4.22 | 4.23 | shipped |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -293,14 +293,16 @@ $ must-gather-sos \
     -n monitoring --jobs 4
 ```
 
-Each image needs a catalog, and one is chosen by matching the reference
-against the catalogs listed by `--list-catalogs`. If none matches, say which
-describes it:
+Each image needs a catalog. The repository path picks the family
+(openshift vs acm); the **image tag** picks the release catalog
+(`:4.18` → `openshift-4.18`). Untagged refs, digests, and unknown tags fall
+back to the family's payload/main catalog. See `--list-catalogs`.
 
 | you write | you get |
 |---|---|
-| nothing | the cluster's own payload image, `openshift` catalog |
-| `--image IMG` | the catalog whose pattern matches `IMG` |
+| nothing | the cluster's own payload image, `openshift` (main) catalog |
+| `--image …/origin-must-gather:4.18` | `openshift-4.18` |
+| `--image …/origin-must-gather:latest` | `openshift` (main fallback) |
 | `--catalog NAME` | that catalog, and its default image if it has one |
 | `--catalog NAME --image IMG` | they pair — the long-standing fork workflow |
 | `--catalog IMG=NAME` | pins `NAME` to `IMG`; repeatable |
@@ -433,8 +435,10 @@ Four things follow from that:
   is no-ops on any given cluster — the operator simply is not installed — and
   `no-op` says so rather than leaving you to guess from silence.
 - **A script the image does not have is `missing`, not `failed`.** That is
-  `rc=127`, and it means the catalog and the image are from different
-  releases; the summary says so and suggests the matching `--image`.
+  `rc=127`. With a tagged `--image` this should be rare — the matching
+  release catalog is selected automatically. It still happens for digests /
+  `latest` (main fallback) against an older image; the summary lists them
+  and suggests pinning the matching tag or `-n`.
 - **A slow task does not look like a hang.** Every 30 seconds
   (`TASK_HEARTBEAT`) the run says what is still going and for how long.
 
@@ -557,16 +561,17 @@ archive: must-gather-04123456-20261016T153045Z.tar.xz (182.4 MiB)
 Plugin names, the default set, execution phases, per-plugin arguments and the
 `core` resource lists all come from JSON catalogs under
 `must_gather_sos/data/`, generated from upstream by parsing
-`collection-scripts/gather`. Which catalogs we ship, which repo/ref each is
-synced from, and which release branches we track for compatibility, live in
+`collection-scripts/gather`. We ship **one catalog per supported release**
+(`openshift.json`, `openshift-4.18.json`, …) so `--image …:4.18` drives the
+4.18 plugin set, not main's. The family, versions, and upstream repos live in
 [`tools/catalogs.yaml`](tools/catalogs.yaml).
 
 ```console
-$ make sync-catalogs             # every auto-syncable catalog at its sync_ref
-$ make sync-catalog              # openshift only, from main
+$ make sync-catalogs             # every version of every auto-syncable family
+$ make sync-catalog              # openshift main (payload) only
 $ make sync-catalog REF=release-4.19
-$ make catalog-status            # print the compatibility tables
-$ make catalog-check             # same check; fails if a sync_ref is stale
+$ make catalog-status            # smoke-test every shipped catalog
+$ make catalog-check             # same check; non-zero on any fail/error
 ```
 
 Catalogs are committed, so `--list-plugins` and `--dry-run` work offline and
@@ -576,13 +581,10 @@ sync time. ACM is hand-written (`sync: manual` in the registry) because its
 gather entrypoint has no `named_resources` arrays for the openshift-layout
 parser.
 
-Compatibility against each tracked upstream ref is exercised in CI
+Compatibility of each shipped catalog is exercised in CI
 (`.github/workflows/catalog-compat.yml`): offline fixture tests on every PR,
-plus a live matrix that clones each `check_refs` entry and prints two tables
-into the job summary — **Shipped catalogs** (one row per catalog we commit)
-and **Upstream coverage** (catalog × release, cells `match` / `older` /
-`newer` / `diverged` / `error`). The same report is uploaded as the
-`catalog-status` artifact.
+plus a live matrix that smoke-tests every versioned catalog and prints the
+badge table into the job summary (also uploaded as `catalog-status`).
 
 ```console
 $ must-gather-sos --list-catalogs

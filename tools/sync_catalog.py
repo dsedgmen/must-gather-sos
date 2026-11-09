@@ -481,7 +481,7 @@ def discover_scripts(scripts_dir):
 
 
 def build_catalog(src, ref, commit, name="openshift", payload=True,
-                  repo=DEFAULT_REPO, image_match=None):
+                  repo=DEFAULT_REPO, image_match=None, version=None):
     scripts_dir = os.path.join(src, "collection-scripts")
     core, invocations = parse_gather(os.path.join(scripts_dir, "gather"))
     all_names = discover_scripts(scripts_dir)
@@ -540,17 +540,23 @@ def build_catalog(src, ref, commit, name="openshift", payload=True,
     if image_match is None:
         image_match = list(IMAGE_MATCH)
 
+    image = {
+        # The payload image oc picks when no --image is given, so no
+        # default of our own: naming one would break a disconnected
+        # cluster whose payload image is mirrored somewhere else.
+        "default": None,
+        "match": list(image_match),
+        "payload": payload,
+    }
+    # Release catalogs carry an explicit version so --image …:4.18 picks
+    # them; the main/payload catalog leaves this null and is the fallback.
+    if version:
+        image["version"] = version
+
     return {
         "catalog_version": 2,
         "name": name,
-        "image": {
-            # The payload image oc picks when no --image is given, so no
-            # default of our own: naming one would break a disconnected
-            # cluster whose payload image is mirrored somewhere else.
-            "default": None,
-            "match": list(image_match),
-            "payload": payload,
-        },
+        "image": image,
         "profile": PROFILE,
         "source": {
             "repo": repo,
@@ -572,12 +578,11 @@ def build_catalog(src, ref, commit, name="openshift", payload=True,
 
 
 def _should_vendor(entry, ref, src):
-    """Only refresh vendored fixtures from the openshift main/release tree."""
-    if entry["name"] != "openshift":
+    """Only refresh vendored fixtures from the openshift payload (main) tree."""
+    if entry.get("family") != "openshift" and entry.get("name") != "openshift":
         return False
-    if src is not None:
-        return ref in ("main", "master") or ref.startswith("release-")
-    return ref in ("main", "master") or ref.startswith("release-")
+    # One common.sh in tests/data/upstream; keep it on the payload catalog.
+    return bool(entry.get("payload")) and ref in ("main", "master")
 
 
 def write_catalog(catalog, out):
@@ -608,6 +613,7 @@ def sync_entry(entry, ref=None, src=None):
             payload=bool(entry.get("payload")),
             repo=entry["repo"],
             image_match=entry.get("image_match"),
+            version=entry.get("version"),
         )
         if _should_vendor(entry, ref, src):
             for upstream_path, local_path in VENDORED.items():
@@ -649,19 +655,37 @@ def main(argv=None):
         print(f"sync: {exc}", file=sys.stderr)
         return 2
 
+    def _prepare(entry):
+        from catalog_registry import catalog_name_for, out_path_for, version_label
+        entry = dict(entry)
+        if args.out:
+            entry["out"] = os.path.normpath(args.out)
+        if args.name:
+            entry["name"] = args.name
+        if args.payload is not None:
+            entry["payload"] = args.payload
+        if args.ref and args.ref != entry.get("sync_ref"):
+            # Retarget name/out/version so `make sync-catalog REF=release-4.19`
+            # updates openshift-4.19.json instead of the payload catalog.
+            family = entry.get("family") or entry["name"]
+            label = version_label(args.ref)
+            entry["sync_ref"] = args.ref
+            entry["version"] = None if label == "main" else label
+            if not args.name:
+                entry["name"] = catalog_name_for(family, args.ref)
+            if not args.out:
+                entry["out"] = out_path_for(family, args.ref)
+            if label != "main" and args.payload is None:
+                entry["payload"] = False
+        return entry
+
     if args.catalog:
         try:
             entry = by_name(entries, args.catalog)
         except RegistryError as exc:
             print(f"sync: {exc}", file=sys.stderr)
             return 2
-        if args.out:
-            entry = dict(entry, out=os.path.normpath(args.out))
-        if args.name:
-            entry = dict(entry, name=args.name)
-        if args.payload is not None:
-            entry = dict(entry, payload=args.payload)
-        sync_entry(entry, ref=args.ref, src=args.src)
+        sync_entry(_prepare(entry), ref=args.ref, src=args.src)
         return 0
 
     if args.ref or args.src or args.out or args.name is not None:
@@ -671,13 +695,7 @@ def main(argv=None):
         except RegistryError as exc:
             print(f"sync: {exc}", file=sys.stderr)
             return 2
-        if args.out:
-            entry = dict(entry, out=os.path.normpath(args.out))
-        if args.name:
-            entry = dict(entry, name=args.name)
-        if args.payload is not None:
-            entry = dict(entry, payload=args.payload)
-        sync_entry(entry, ref=args.ref, src=args.src)
+        sync_entry(_prepare(entry), ref=args.ref, src=args.src)
         return 0
 
     rc = 0

@@ -41,10 +41,21 @@ class TestCatalogRegistry(unittest.TestCase):
     def test_loads_shipped_registry(self):
         entries = load_registry()
         names = [e["name"] for e in entries]
-        self.assertEqual(names, ["openshift", "better-gather", "acm"])
+        self.assertIn("openshift", names)
+        self.assertIn("openshift-4.18", names)
+        self.assertIn("better-gather", names)
+        self.assertIn("better-gather-4.20", names)
+        self.assertIn("acm", names)
         openshift = by_name(entries, "openshift")
         self.assertEqual(openshift["sync"], "openshift-layout")
-        self.assertIn("release-4.19", openshift["check_refs"])
+        self.assertEqual(openshift["sync_ref"], "main")
+        self.assertTrue(openshift["payload"])
+        self.assertIsNone(openshift["version"])
+        release = by_name(entries, "openshift-4.19")
+        self.assertEqual(release["family"], "openshift")
+        self.assertEqual(release["sync_ref"], "release-4.19")
+        self.assertEqual(release["version"], "4.19")
+        self.assertFalse(release["payload"])
 
     def test_rejects_bad_sync_method(self):
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
@@ -133,12 +144,9 @@ class TestCompatReport(unittest.TestCase):
             self.assertIn("**fixture** (", report)
             self.assertIn("img.shields.io/badge/pass-", report)
             self.assertNotIn("| pass |", report)
-            by_ref = {r["label"]: r["status"] for r in compat}
-            self.assertEqual(by_ref["base"], "pass")
-            self.assertEqual(by_ref["newer"], "pass")
-            self.assertEqual(by_ref["weaker"], "pass")
-            for row in compat:
-                self.assertIn("plugins", row["notes"])
+            self.assertEqual(len(compat), 1)
+            self.assertEqual(compat[0]["status"], "pass")
+            self.assertIn("plugins", compat[0]["notes"])
 
     def test_write_readme_is_surgical(self):
         before = (

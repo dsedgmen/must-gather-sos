@@ -298,22 +298,7 @@ def build_targets(args, reduce_logs):
 
 
 def _catalog_for_image(image):
-    matches = [
-        name for name, path in catalog_mod.registry().items()
-        if Catalog.load(path).image.matches(image)
-    ]
-    if len(matches) == 1:
-        return Catalog.load(matches[0])
-    if not matches:
-        raise UserError(
-            f"no built-in catalog recognises the image {image!r}. Say which "
-            f"describes it with --catalog {image}=NAME, or see "
-            "--list-catalogs."
-        )
-    raise UserError(
-        f"{', '.join(sorted(matches))} all claim the image {image!r}; "
-        f"pick one with --catalog {image}=NAME"
-    )
+    return catalog_mod.catalog_for_image(image)
 
 
 def _target(catalog, image, args, reduce_logs, default_jobs, image_jobs,
@@ -538,7 +523,9 @@ def list_catalogs(out=None):
     for row in rows:
         where = ", ".join(row["images"]) or "no image pattern; select by name"
         if row["payload"]:
-            where = "the cluster's own payload image; " + where
+            where = "payload / untagged fallback; " + where
+        if row.get("version"):
+            where = f"tag {row['version']}; " + where
         print(f"  {row['name']:<{width}}{row['plugins']} plugins, "
               f"profile {row['profile']}", file=out)
         print(f"  {'':<{width}}{where}", file=out)

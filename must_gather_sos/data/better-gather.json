@@ -25,10 +25,10 @@
     "noop_pattern": null
   },
   "source": {
-    "repo": "https://github.com/openshift/must-gather.git",
-    "ref": "better-gather",
-    "commit": "e874dcb088005050f9e186b2d723e93bc10383d4",
-    "synced": "2026-10-16T23:11:24+00:00"
+    "repo": "https://github.com/dsedgmen/better-gather.git",
+    "ref": "main",
+    "commit": "172bfe2e6dc6f50c5ad67afc160dbb8748c8cc8e",
+    "synced": "2026-11-09T04:17:13+00:00"
   },
   "core": {
     "description": "Base 'oc adm inspect' pass from upstream's gather script: cluster version, cluster operators, API services, CSRs, nodes, core namespaces, storage, image mirroring, networking, leases, API priority and fairness, and cluster resource quotas.",

@@ -1,20 +1,27 @@
 # Registry of must-gather catalogs we ship and the upstream refs we
-# track for compatibility. tools/sync_catalog.py and tools/catalog_status.py
-# both read this file.
+# track. tools/sync_catalog.py and tools/catalog_status.py both read this.
 #
 # sync:
 #   openshift-layout  -- parse collection-scripts/gather (auto)
 #   manual            -- hand-written JSON; listed but never regenerated
 #
-# sync_ref is what we commit into out/. check_refs are the versions the
-# compatibility matrix compares the shipped catalog against.
+# Each openshift-layout entry expands to one shipped catalog per ref in
+# ``versions``:
+#   main / master  →  must_gather_sos/data/<name>.json
+#   release-X.Y    →  must_gather_sos/data/<name>-X.Y.json
+#
+# Runtime picks the catalog from the --image tag (4.18 → openshift-4.18);
+# the payload catalog (``payload_ref``) is used when --image is absent or
+# the tag does not name a shipped version.
 
 catalogs:
   - name: openshift
     sync: openshift-layout
     repo: https://github.com/openshift/must-gather.git
-    sync_ref: main
-    check_refs:
+    # Only this family's payload_ref catalog claims oc's default image.
+    payload: true
+    payload_ref: main
+    versions:
       - main
       - release-4.16
       - release-4.17
@@ -24,9 +31,8 @@ catalogs:
       - release-4.21
       - release-4.22
       - release-4.23
-    out: must_gather_sos/data/openshift.json
-    payload: true
     # Matched as case-insensitive substrings of the image repository path.
+    # The tag then selects which versioned catalog is used.
     image_match:
       - origin-must-gather
       - openshift/must-gather
@@ -37,8 +43,7 @@ catalogs:
     # Fork of openshift/must-gather that applies the --since window to file
     # collection itself. Tracks the same release lines as the fork publishes.
     repo: https://github.com/dsedgmen/better-gather.git
-    sync_ref: main
-    check_refs:
+    versions:
       - main
       - release-4.18
       - release-4.19
@@ -46,8 +51,6 @@ catalogs:
       - release-4.21
       - release-4.22
       - release-4.23
-    out: must_gather_sos/data/better-gather.json
-    payload: false
     # Select by --catalog name; no image substring of its own.
     image_match: []
 

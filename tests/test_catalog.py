@@ -90,20 +90,45 @@ class TestEveryShippedCatalog(unittest.TestCase):
                      if Catalog.load(p).image.payload]
         self.assertEqual(claimants, ["openshift"])
 
-    def test_image_patterns_do_not_overlap_between_catalogs(self):
-        # Matching is by substring, so "must-gather" in one catalog would
-        # also claim another product's "acm-must-gather".
+    def test_image_patterns_do_not_overlap_across_families(self):
+        # Matching is by substring, so "must-gather" in one family would
+        # also claim another product's "acm-must-gather". Versioned catalogs
+        # of the same family intentionally share patterns; the tag picks
+        # among them.
         catalogs = {n: Catalog.load(p) for n, p in shipped_catalogs().items()}
+
+        def family_of(catalog):
+            # openshift-4.18 → openshift; better-gather → better-gather
+            version = catalog.image.version
+            if version and catalog.name.endswith(f"-{version}"):
+                return catalog.name[: -(len(version) + 1)]
+            return catalog.name
+
         for name, catalog in catalogs.items():
             for pattern in catalog.image.match:
                 for other_name, other in catalogs.items():
-                    if other_name == name:
+                    if family_of(other) == family_of(catalog):
                         continue
                     with self.subTest(pattern=pattern, other=other_name):
                         self.assertFalse(
                             other.image.matches(f"registry.example.com/{pattern}:v1"),
                             f"{other_name} also claims {name}'s {pattern!r}",
                         )
+
+    def test_versioned_catalogs_share_a_family_and_unique_versions(self):
+        catalogs = [Catalog.load(p) for p in shipped_catalogs().values()]
+        by_match = {}
+        for catalog in catalogs:
+            key = tuple(catalog.image.match)
+            if not key:
+                continue
+            by_match.setdefault(key, []).append(catalog)
+        for key, group in by_match.items():
+            versions = [c.image.version for c in group]
+            # Exactly one unversioned/payload fallback per pattern set.
+            self.assertEqual(versions.count(None), 1, key)
+            numbered = [v for v in versions if v is not None]
+            self.assertEqual(len(numbered), len(set(numbered)), key)
 
 
 class TestShippedCatalog(unittest.TestCase):
@@ -269,6 +294,29 @@ class TestImageMatching(unittest.TestCase):
     def test_no_reference_matches_nothing(self):
         self.assertFalse(self.catalog.image.matches(None))
         self.assertFalse(self.catalog.image.matches(""))
+
+    def test_tag_selects_the_versioned_catalog(self):
+        from must_gather_sos.catalog import catalog_for_image
+        chosen = catalog_for_image(
+            "quay.io/openshift/origin-must-gather:4.18")
+        self.assertEqual(chosen.name, "openshift-4.18")
+        self.assertEqual(chosen.image.version, "4.18")
+        self.assertEqual(
+            len(chosen.plugins),
+            len(Catalog.load("openshift-4.18").plugins),
+        )
+
+    def test_untagged_and_digest_fall_back_to_payload(self):
+        from must_gather_sos.catalog import catalog_for_image
+        for ref in (
+            "quay.io/openshift/origin-must-gather:latest",
+            "quay.io/openshift/origin-must-gather@sha256:deadbeef",
+            "openshift/origin-must-gather",
+        ):
+            with self.subTest(ref=ref):
+                chosen = catalog_for_image(ref)
+                self.assertEqual(chosen.name, "openshift")
+                self.assertTrue(chosen.image.payload)
 
 
 if __name__ == "__main__":
