@@ -3,7 +3,9 @@
   "name": "better-gather-4.19",
   "image": {
     "default": null,
-    "match": [],
+    "match": [
+      "better-gather$"
+    ],
     "payload": false,
     "version": "4.19"
   },

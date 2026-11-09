@@ -25,6 +25,7 @@ Each cell is the shipped catalog for that image version: full generate+run of ev
 | **openshift** (33) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | — |
 | **better-gather** (33) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | — | — | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | — |
 | **acm** (10) | — | — | — | — | — | — | — | — | — | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) |
+| **odf** (9) | — | — | — | — | — | — | — | — | — | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) |
 
 <!-- catalog-status:end -->
 
@@ -329,12 +330,14 @@ branch per image family and works out at runtime which one it woke up in:
 mgs_detect() {
 	if [ -f /usr/bin/common.sh ]; then echo openshift; return 0; fi
 	if [ -f /usr/bin/gather_utils ]; then echo acm; return 0; fi
+	if [ -f /usr/bin/gather_ceph_resources ]; then echo odf; return 0; fi
 	return 1
 }
 
 case "$(mgs_detect)" in
 openshift) mgs_run_openshift ;;
 acm)       mgs_run_acm ;;
+odf)       mgs_run_odf ;;
 *)         echo "must-gather-sos: running its own entrypoint instead."
            exec /usr/bin/gather ;;
 esac
@@ -381,6 +384,43 @@ catalogs carry a runtime *profile* rather than assuming upstream's layout:
   profile runs the same `check_if_*` detection before collecting. Without
   that the plugins would collect nothing — and since an empty log reads as
   `no-op`, they would do it quietly.
+
+### ODF
+
+The ODF catalog covers
+[`red-hat-storage/odf-must-gather`](https://github.com/red-hat-storage/odf-must-gather)
+(`registry.redhat.io/odf4/odf-must-gather-rhel9`). Upstream's `/usr/bin/gather`
+is flag-driven (`-o`/`-d`/`-n`/…); the plugins are the leaf scripts those
+flags run. The default set matches `gather_main` (no flags).
+
+```console
+$ must-gather-sos --image registry.redhat.io/odf4/odf-must-gather-rhel9:v4.22
+$ must-gather-sos --catalog odf -o ceph,ceph_logs,noobaa
+$ must-gather-sos --catalog odf -o namespaced,clusterscoped,dr --since 2h
+```
+
+`--since` reaches ODF through `utils.sh` (`LOG_FILTER_ARGS` /
+`JCTL_FILTER_ARGS`). `--reduce-logs` does nothing here — there is no
+`compress_logs`. Stock ODF still rsyncs whole Ceph/CSI host directories for
+`ceph_logs`; for a fork that actually bounds those trees see
+[better-gather-odf](https://github.com/dsedgmen/better-gather-odf) below.
+
+### better-gather-odf
+
+Unofficial sibling of [better-gather](https://github.com/dsedgmen/better-gather)
+for ODF: same plugins as the stock catalog, but `gather_ceph_logs` uses
+`copy_pod_dir_since` so `--since` bounds the host directory copies. Images
+publish to `ghcr.io/dsedgmen/better-gather-odf` (private packages; needs a
+pull secret — see that repo's README).
+
+```console
+$ must-gather-sos --image ghcr.io/dsedgmen/better-gather-odf:4.18 \
+      --run-namespace must-gather-run --since 30m
+$ must-gather-sos --catalog better-gather-odf -o ceph_logs --since 2h
+```
+
+`ceph_logs` is classified `files` here (stock ODF keeps `journal`). Not a
+Red Hat product.
 
 ACS is **not** supported. There is no official Red Hat ACS must-gather image;
 the documented route is `roxctl central debug download-diagnostics`, a
@@ -578,9 +618,9 @@ $ make catalog-check             # same check; non-zero on any fail/error
 Catalogs are committed, so `--list-plugins` and `--dry-run` work offline and
 every resync is a reviewable diff. Human descriptions and plugin option specs
 live in the `OVERLAY` table in `tools/sync_catalog.py` and are merged in at
-sync time. ACM is hand-written (`sync: manual` in the registry) because its
-gather entrypoint has no `named_resources` arrays for the openshift-layout
-parser.
+sync time. ACM, ODF, and better-gather-odf are hand-written (`sync: manual` in the registry)
+because their gather entrypoints are not the openshift-layout
+`named_resources` form the sync tool parses.
 
 Compatibility of each shipped catalog is exercised in CI
 (`.github/workflows/catalog-compat.yml`): offline fixture tests on every PR,
@@ -596,8 +636,10 @@ second catalog ships for [better-gather](https://github.com/dsedgmen/better-gath
 a fork of must-gather that applies the window to file collection itself:
 
 ```console
+$ must-gather-sos --image ghcr.io/dsedgmen/better-gather:4.20 \
+      --run-namespace <ns> -o audit_logs --since 30m
 $ must-gather-sos --catalog better-gather \
-      --image <better-gather-image> --run-namespace <ns> -o audit_logs --since 30m
+      --image ghcr.io/dsedgmen/better-gather --run-namespace <ns> -o audit_logs --since 30m
 ```
 
 Against that image the `--since` warnings correctly go away for the plugins

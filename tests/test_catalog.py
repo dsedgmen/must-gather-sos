@@ -106,12 +106,16 @@ class TestEveryShippedCatalog(unittest.TestCase):
 
         for name, catalog in catalogs.items():
             for pattern in catalog.image.match:
+                # End-anchored patterns (…$) are stored with the marker; the
+                # sample image path uses the stem only.
+                sample = pattern[:-1] if pattern.endswith("$") else pattern
                 for other_name, other in catalogs.items():
                     if family_of(other) == family_of(catalog):
                         continue
                     with self.subTest(pattern=pattern, other=other_name):
                         self.assertFalse(
-                            other.image.matches(f"registry.example.com/{pattern}:v1"),
+                            other.image.matches(
+                                f"registry.example.com/{sample}:v1"),
                             f"{other_name} also claims {name}'s {pattern!r}",
                         )
 
@@ -290,6 +294,38 @@ class TestImageMatching(unittest.TestCase):
     def test_does_not_claim_another_products_must_gather(self):
         self.assertFalse(self.catalog.image.matches(
             "registry.redhat.io/rhacm2/acm-must-gather-rhel9:v2.14"))
+        self.assertFalse(self.catalog.image.matches(
+            "registry.redhat.io/odf4/odf-must-gather-rhel9:v4.22"))
+
+    def test_odf_image_selects_the_odf_catalog(self):
+        from must_gather_sos.catalog import catalog_for_image
+        chosen = catalog_for_image(
+            "registry.redhat.io/odf4/odf-must-gather-rhel9:v4.22")
+        self.assertEqual(chosen.name, "odf")
+        self.assertEqual(chosen.profile.id, "odf")
+        self.assertIn("ceph", chosen.names)
+        self.assertIn("noobaa", chosen.names)
+
+    def test_better_gather_image_selects_versioned_catalog(self):
+        from must_gather_sos.catalog import catalog_for_image
+        chosen = catalog_for_image("ghcr.io/dsedgmen/better-gather:4.20")
+        self.assertEqual(chosen.name, "better-gather-4.20")
+        self.assertEqual(chosen.image.version, "4.20")
+
+    def test_better_gather_does_not_claim_odf_or_cnv_forks(self):
+        self.assertFalse(Catalog.load("better-gather").image.matches(
+            "ghcr.io/dsedgmen/better-gather-odf:4.18"))
+        self.assertFalse(Catalog.load("better-gather").image.matches(
+            "ghcr.io/dsedgmen/better-gather-cnv:4.18"))
+
+    def test_better_gather_odf_image_selects_its_catalog(self):
+        from must_gather_sos.catalog import catalog_for_image
+        chosen = catalog_for_image("ghcr.io/dsedgmen/better-gather-odf:4.18")
+        self.assertEqual(chosen.name, "better-gather-odf")
+        self.assertEqual(chosen.profile.id, "better-gather-odf")
+        self.assertEqual(chosen.get("ceph_logs").since, "files")
+        # Stock ODF still reports the weaker bound for the same plugin.
+        self.assertEqual(Catalog.load("odf").get("ceph_logs").since, "journal")
 
     def test_no_reference_matches_nothing(self):
         self.assertFalse(self.catalog.image.matches(None))

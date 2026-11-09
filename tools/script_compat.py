@@ -64,6 +64,19 @@ function {name}() {{
 }}
 """
 
+#: Richer stubs for profile libraries that the generated setup actually calls.
+LIBRARY_STUBS = {
+    "utils.sh": """\
+#!/bin/bash
+# ODF utils.sh stand-in for compat smoke tests.
+dbglog() { echo "$*" >>"${BASE_COLLECTION_PATH:-.}/gather-debug.log" 2>/dev/null || true; }
+dbglogf() { :; }
+parse_since_time() { :; }
+export_pod_image_details() { :; }
+export -f dbglog dbglogf parse_since_time export_pod_image_details
+""",
+}
+
 
 class CompatSandbox:
     """Minimal fake must-gather image for a compatibility smoke test."""
@@ -84,6 +97,9 @@ class CompatSandbox:
 
         self._write("version", VERSION_STUB)
         self._write("oc", OC_STUB)
+        # Helpers some profiles invoke from setup (ODF pre-install, …).
+        for helper in ("pre-install.sh", "post-uninstall.sh"):
+            self._write(helper, STUB)
 
         function_stubs = []
         for name, plugin in catalog.plugins.items():
@@ -94,7 +110,7 @@ class CompatSandbox:
             else:
                 function_stubs.append(plugin.script)
 
-        # Profile libraries (common.sh already handled; gather_utils for ACM).
+        # Profile libraries (common.sh already handled; gather_utils / utils.sh).
         for src in catalog.profile.source:
             base = os.path.basename(src)
             if base == "common.sh":
@@ -102,7 +118,7 @@ class CompatSandbox:
             rel = src[len("/usr/bin/"):] if src.startswith("/usr/bin/") else base
             path = os.path.join(self.bin, rel)
             if not os.path.exists(path):
-                body = "#!/bin/bash\n# stub library\n"
+                body = LIBRARY_STUBS.get(base, "#!/bin/bash\n# stub library\n")
                 if function_stubs:
                     body += "\n" + "\n".join(
                         FUNC_STUB.format(name=fn) for fn in function_stubs

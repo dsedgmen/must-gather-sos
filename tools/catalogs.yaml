@@ -51,10 +51,29 @@ catalogs:
       - release-4.21
       - release-4.22
       - release-4.23
-    # Select by --catalog name; no image substring of its own.
-    image_match: []
+    # End-anchored so this does not also claim better-gather-odf / -cnv.
+    image_match:
+      - better-gather$
 
   - name: acm
     sync: manual
     repo: https://github.com/stolostron/must-gather.git
     out: must_gather_sos/data/acm.json
+
+  - name: odf
+    sync: manual
+    # Flag-driven gather (-o/-d/-n/…); leaf scripts mapped by hand in odf.json.
+    repo: https://github.com/red-hat-storage/odf-must-gather.git
+    out: must_gather_sos/data/odf.json
+    image_match:
+      - odf-must-gather
+      - ocs-must-gather
+
+  - name: better-gather-odf
+    sync: manual
+    # Sibling of better-gather: ODF fork that bounds gather_ceph_logs with
+    # copy_pod_dir_since. Same plugin set as odf; ceph_logs since=files.
+    repo: https://github.com/dsedgmen/better-gather-odf.git
+    out: must_gather_sos/data/better-gather-odf.json
+    image_match:
+      - better-gather-odf

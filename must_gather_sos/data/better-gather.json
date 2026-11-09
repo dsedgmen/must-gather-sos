@@ -3,7 +3,9 @@
   "name": "better-gather",
   "image": {
     "default": null,
-    "match": [],
+    "match": [
+      "better-gather$"
+    ],
     "payload": false
   },
   "profile": {
