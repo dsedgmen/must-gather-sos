@@ -1,0 +1,68 @@
+name: Catalog compatibility
+
+# Offline unit tests always; live upstream matrix on push/PR/schedule.
+# The upstream job prints a status table into the GitHub Job Summary.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly refresh so release-branch drift does not go unnoticed.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  unit:
+    name: Offline catalog tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install tools dependencies
+        run: python3 -m pip install pyyaml
+
+      - name: Registry, sync fixtures, and drift classifier
+        run: python3 -m unittest tests.test_catalog_sync -v
+
+      - name: Every shipped catalog still loads
+        run: python3 -m unittest tests.test_catalog.TestEveryShippedCatalog -v
+
+  upstream:
+    name: Upstream compatibility matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install tools dependencies
+        run: python3 -m pip install pyyaml
+
+      - name: Compare shipped catalogs to tracked upstream refs
+        id: compat
+        run: |
+          set +e
+          python3 tools/catalog_status.py > catalog-status.md
+          rc=$?
+          set -e
+          {
+            echo "## Catalog compatibility"
+            echo
+            echo "Shipped catalogs vs each tracked upstream ref from \`tools/catalogs.yaml\`."
+            echo
+            cat catalog-status.md
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: catalog-status
+          path: catalog-status.md

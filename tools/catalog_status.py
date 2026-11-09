@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
-"""Report how each shipped catalog sits against its tracked upstream refs.
+"""Report the state of each shipped catalog and its upstream coverage.
 
-For every openshift-layout entry in ``tools/catalogs.yaml``, each ``check_refs``
-value is cloned, parsed with the same builder as sync, and diffed against the
-committed catalog JSON. Manual catalogs get a single ``manual`` row.
+Two views, both written into the README markers:
 
-Statuses:
-  current      identical to the shipped catalog (ignoring source.synced)
-  compatible   shipped catalog is still safe against that image (only
-               additive upstream changes: extra plugins / core resources,
-               or stronger --since)
-  drift        shipped catalog would mis-drive a gather on that image
-               (missing plugin, weaker --since, or removed core resource)
-  error        clone/parse failed
-  manual       hand-written catalog; not auto-compared
+1. **Shipped catalogs** — one row per catalog we commit (where it came
+   from, how many plugins, whether its sync_ref still matches).
+2. **Upstream coverage** — matrix of catalog × tracked ref. Cells say how
+   that upstream version relates to the shipped catalog:
+     match     identical to shipped
+     older     upstream is behind shipped (expected for past releases)
+     newer     upstream has moved on; run ``make sync-catalogs``
+     diverged  changes in both directions
+     manual    hand-written; not compared
+     error     clone/parse failed
+
+``make catalog-check`` fails only when a sync_ref is not ``match``, or any
+cell is ``error`` — not when past releases are simply ``older``.
 
 Usage:
-    tools/catalog_status.py                  # print table; exit 1 on drift/error
-    tools/catalog_status.py --write-readme   # also refresh the README markers
+    tools/catalog_status.py
+    tools/catalog_status.py --write-readme
     tools/catalog_status.py --src-map openshift=/path/to/checkout
 """
 
@@ -30,6 +32,7 @@ import re
 import shutil
 import subprocess
 import sys
+from urllib.parse import urlparse
 
 from catalog_registry import RegistryError, load_registry
 from sync_catalog import build_catalog, fetch_source
@@ -41,7 +44,6 @@ README = os.path.join(ROOT, "README.md")
 MARKER_START = "<!-- catalog-status:start -->"
 MARKER_END = "<!-- catalog-status:end -->"
 
-# Higher index = more of the --since window actually takes effect.
 SINCE_RANK = {
     "none": 0,
     "passed-through": 1,
@@ -91,30 +93,38 @@ def _canonical(doc):
 
 
 def classify_drift(shipped, ephemeral):
-    """Compare shipped catalog to one built from an upstream ref.
+    """How *ephemeral* (one upstream ref) relates to the shipped catalog.
 
-    Returns (status, notes) where status is current|compatible|drift.
+    Returns (status, notes) with status in match|older|newer|diverged.
     """
     a = _canonical(shipped)
     b = _canonical(ephemeral)
     if a == b:
-        return "current", ""
+        return "match", ""
 
     notes = []
-    blocking = False
+    shipped_only = False   # things shipped has that upstream lacks
+    upstream_only = False  # things upstream has that shipped lacks
 
     shipped_plugins = set(a["plugins"])
     ephemeral_plugins = set(b["plugins"])
     missing = sorted(shipped_plugins - ephemeral_plugins)
     added = sorted(ephemeral_plugins - shipped_plugins)
     if missing:
-        blocking = True
-        notes.append(f"-{len(missing)} {_plural(len(missing), 'plugin')} ({_sample(missing)})")
+        shipped_only = True
+        notes.append(
+            f"upstream lacks {len(missing)} "
+            f"{_plural(len(missing), 'plugin')} ({_sample(missing)})"
+        )
     if added:
-        notes.append(f"+{len(added)} {_plural(len(added), 'plugin')} ({_sample(added)})")
+        upstream_only = True
+        notes.append(
+            f"upstream adds {len(added)} "
+            f"{_plural(len(added), 'plugin')} ({_sample(added)})"
+        )
 
-    since_down = []
-    since_up = []
+    since_weaker = []   # upstream weaker than shipped
+    since_stronger = []
     for name in sorted(shipped_plugins & ephemeral_plugins):
         s_since = a["plugins"][name]["since"]
         e_since = b["plugins"][name]["since"]
@@ -122,35 +132,31 @@ def classify_drift(shipped, ephemeral):
             continue
         s_rank = SINCE_RANK.get(s_since, 0)
         e_rank = SINCE_RANK.get(e_since, 0)
-        # Shipped claims more capability than the image has: unsafe.
         if s_rank > e_rank:
-            blocking = True
-            since_down.append(name)
+            shipped_only = True
+            since_weaker.append(name)
         else:
-            since_up.append(name)
-    if since_down:
-        notes.append(f"since weaker: {_sample(since_down)}")
-    elif since_up:
-        notes.append(f"since stronger: {_sample(since_up)}")
+            upstream_only = True
+            since_stronger.append(name)
+    if since_weaker:
+        notes.append(f"upstream --since weaker: {_sample(since_weaker)}")
+    if since_stronger:
+        notes.append(f"upstream --since stronger: {_sample(since_stronger)}")
 
     core_removed = 0
     core_added = 0
     for key in ("named_resources", "group_resources", "all_ns_resources"):
         s_set = set(a["core"][key])
         e_set = set(b["core"][key])
-        gone = s_set - e_set
-        new = e_set - s_set
-        if gone:
-            blocking = True
-            core_removed += len(gone)
-        core_added += len(new)
+        core_removed += len(s_set - e_set)
+        core_added += len(e_set - s_set)
     if core_removed:
-        notes.append(f"core -{core_removed} resources")
-    elif core_added:
-        notes.append(f"core +{core_added} resources")
+        shipped_only = True
+        notes.append(f"upstream lacks {core_removed} core resources")
+    if core_added:
+        upstream_only = True
+        notes.append(f"upstream adds {core_added} core resources")
 
-    # Other plugin field changes (phase/default/args) are informative; they
-    # do not by themselves make the shipped catalog unsafe.
     other = []
     for name in sorted(shipped_plugins & ephemeral_plugins):
         sp, ep = a["plugins"][name], b["plugins"][name]
@@ -158,10 +164,20 @@ def classify_drift(shipped, ephemeral):
             if sp[field] != ep[field]:
                 other.append(name)
                 break
-    if other and not since_down and not since_up:
-        notes.append(f"meta changed: {_sample(other)}")
+    if other and not since_weaker and not since_stronger:
+        # Meta-only churn: treat as diverged so it is visible, not silent.
+        shipped_only = True
+        upstream_only = True
+        notes.append(f"plugin meta differs: {_sample(other)}")
 
-    status = "drift" if blocking else "compatible"
+    if shipped_only and upstream_only:
+        status = "diverged"
+    elif shipped_only:
+        status = "older"      # upstream is behind what we ship
+    elif upstream_only:
+        status = "newer"      # upstream has moved on
+    else:
+        status = "diverged"
     return status, "; ".join(notes)
 
 
@@ -176,23 +192,35 @@ def _plural(n, word):
     return word if n == 1 else word + "s"
 
 
+def _short_repo(url):
+    """https://github.com/openshift/must-gather.git → openshift/must-gather"""
+    path = urlparse(url).path.strip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    return path or url
+
+
+def _short_ref(ref):
+    if ref.startswith("release-"):
+        return ref[len("release-"):]
+    return ref
+
+
 def _src_for(entry, ref, src_map):
-    """Resolve an optional local checkout for this entry/ref."""
     if not src_map:
         return None
-    # Exact "name=ref" first, then bare name (applies to every ref).
     return src_map.get(f"{entry['name']}={ref}") or src_map.get(entry["name"])
 
 
 def check_ref(entry, ref, shipped, src_map=None):
-    """Build one upstream ref and classify it against *shipped*. Return row."""
-    row = {
+    """Compare one upstream ref to *shipped*. Return a result dict."""
+    result = {
         "catalog": entry["name"],
         "ref": ref,
-        "shipped": ref == entry.get("sync_ref"),
+        "is_sync_ref": ref == entry.get("sync_ref"),
         "status": "error",
-        "plugins": len(shipped.get("plugins") or {}),
-        "commit": (shipped.get("source") or {}).get("commit", ""),
+        "plugins": len((shipped.get("plugins") or {})),
+        "commit": "",
         "notes": "",
     }
     src = _src_for(entry, ref, src_map)
@@ -207,7 +235,7 @@ def check_ref(entry, ref, shipped, src_map=None):
             image_match=entry.get("image_match"),
         )
         status, notes = classify_drift(shipped, ephemeral)
-        row.update({
+        result.update({
             "status": status,
             "plugins": len(ephemeral.get("plugins") or {}),
             "commit": commit,
@@ -217,68 +245,91 @@ def check_ref(entry, ref, shipped, src_map=None):
         msg = getattr(exc, "stderr", None) or str(exc)
         if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
             msg = exc.stderr.strip().splitlines()[-1]
-        row["notes"] = f"error: {msg}"[:120]
+        result["notes"] = f"error: {msg}"[:120]
     finally:
         if cleanup:
             shutil.rmtree(cleanup, ignore_errors=True)
-    return row
+    return result
 
 
-def manual_row(entry, shipped):
-    source = shipped.get("source") or {}
-    return {
-        "catalog": entry["name"],
-        "ref": source.get("ref") or "—",
-        "shipped": True,
-        "status": "manual",
-        "plugins": len(shipped.get("plugins") or {}),
-        "commit": source.get("commit") or "",
-        "notes": "hand-written; not auto-synced",
-    }
+def collect_status(entries, src_map=None):
+    """Return (shipped_rows, coverage_results).
 
+    shipped_rows: one dict per catalog for the state table.
+    coverage_results: list of check_ref results (auto catalogs only).
+    """
+    shipped_rows = []
+    coverage = []
 
-def collect_rows(entries, src_map=None):
-    rows = []
     for entry in entries:
         try:
             shipped = _load_json(entry["out"])
         except (OSError, ValueError) as exc:
-            rows.append({
+            shipped_rows.append({
                 "catalog": entry["name"],
+                "sync": entry["sync"],
+                "upstream": _short_repo(entry["repo"]),
                 "ref": entry.get("sync_ref") or "—",
-                "shipped": True,
-                "status": "error",
-                "plugins": 0,
                 "commit": "",
+                "synced": "",
+                "plugins": 0,
+                "status": "error",
                 "notes": f"cannot read shipped catalog: {exc}",
             })
             continue
 
+        source = shipped.get("source") or {}
         if entry["sync"] == "manual":
-            rows.append(manual_row(entry, shipped))
+            shipped_rows.append({
+                "catalog": entry["name"],
+                "sync": "manual",
+                "upstream": _short_repo(entry["repo"]),
+                "ref": source.get("ref") or "—",
+                "commit": (source.get("commit") or "")[:12],
+                "synced": (source.get("synced") or "")[:10],
+                "plugins": len(shipped.get("plugins") or {}),
+                "status": "manual",
+                "notes": "",
+            })
             continue
 
         refs = list(entry.get("check_refs") or [])
         sync_ref = entry.get("sync_ref")
         if sync_ref and sync_ref not in refs:
             refs.insert(0, sync_ref)
+
+        sync_result = None
         for ref in refs:
-            rows.append(check_ref(entry, ref, shipped, src_map=src_map))
-    return rows
+            result = check_ref(entry, ref, shipped, src_map=src_map)
+            coverage.append(result)
+            if result["is_sync_ref"]:
+                sync_result = result
+
+        if sync_result is None:
+            status, commit, notes = "error", "", "no sync_ref checked"
+            plugins = len(shipped.get("plugins") or {})
+        else:
+            status = sync_result["status"]
+            commit = (sync_result["commit"] or source.get("commit") or "")[:12]
+            notes = sync_result["notes"]
+            plugins = len(shipped.get("plugins") or {})
+
+        shipped_rows.append({
+            "catalog": entry["name"],
+            "sync": "auto",
+            "upstream": _short_repo(entry["repo"]),
+            "ref": sync_ref or "—",
+            "commit": commit,
+            "synced": (source.get("synced") or "")[:10],
+            "plugins": plugins,
+            "status": status,
+            "notes": notes,
+        })
+
+    return shipped_rows, coverage
 
 
-def render_table(rows):
-    headers = ["Catalog", "Upstream ref", "Shipped", "Status", "Plugins", "Notes"]
-    body = []
-    for row in rows:
-        body.append([
-            row["catalog"],
-            row["ref"],
-            "yes" if row["shipped"] else "",
-            row["status"],
-            str(row["plugins"]),
-            row["notes"].replace("|", "\\|"),
-        ])
+def _md_table(headers, body):
     widths = [len(h) for h in headers]
     for cells in body:
         for i, cell in enumerate(cells):
@@ -292,11 +343,84 @@ def render_table(rows):
         "| " + " | ".join("-" * w for w in widths) + " |",
     ]
     lines.extend(fmt(cells) for cells in body)
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines)
 
 
-def write_readme(table, readme_path=README):
-    """Replace the catalog-status marker region in README.md."""
+def render_shipped_table(shipped_rows):
+    headers = ["Catalog", "Sync", "Upstream", "Ref", "Commit", "Synced",
+               "Plugins", "Status"]
+    body = []
+    for row in shipped_rows:
+        body.append([
+            row["catalog"],
+            row["sync"],
+            row["upstream"],
+            row["ref"],
+            row["commit"] or "—",
+            row["synced"] or "—",
+            str(row["plugins"]),
+            row["status"],
+        ])
+    return _md_table(headers, body)
+
+
+def render_coverage_matrix(shipped_rows, coverage):
+    """Compact catalog × ref matrix. Manual catalogs are marked once."""
+    refs = []
+    for r in coverage:
+        if r["ref"] not in refs:
+            refs.append(r["ref"])
+
+    catalogs = [r["catalog"] for r in shipped_rows]
+    by_key = {(r["catalog"], r["ref"]): r for r in coverage}
+    manual = {r["catalog"] for r in shipped_rows if r["sync"] == "manual"}
+
+    if not refs and not manual:
+        return "_No upstream refs tracked._"
+
+    if refs:
+        headers = ["Catalog"] + [_short_ref(ref) for ref in refs]
+    else:
+        headers = ["Catalog", "Coverage"]
+
+    body = []
+    for name in catalogs:
+        if name in manual:
+            if refs:
+                body.append([name] + ["manual" if i == 0 else "—"
+                                      for i in range(len(refs))])
+            else:
+                body.append([name, "manual"])
+            continue
+        cells = [name]
+        for ref in refs:
+            result = by_key.get((name, ref))
+            cells.append(result["status"] if result else "—")
+        body.append(cells)
+
+    return _md_table(headers, body)
+
+
+def render_report(shipped_rows, coverage):
+    parts = [
+        "#### Shipped catalogs",
+        "",
+        render_shipped_table(shipped_rows),
+        "",
+        "#### Upstream coverage",
+        "",
+        "How each tracked upstream ref relates to the shipped catalog: "
+        "`match` identical, `older` upstream is behind (typical for past "
+        "releases), `newer` upstream has moved on (re-sync), `diverged` "
+        "changes both ways, `error` check failed.",
+        "",
+        render_coverage_matrix(shipped_rows, coverage),
+        "",
+    ]
+    return "\n".join(parts)
+
+
+def write_readme(report, readme_path=README):
     with open(readme_path, encoding="utf-8") as fh:
         text = fh.read()
     if MARKER_START not in text or MARKER_END not in text:
@@ -307,7 +431,7 @@ def write_readme(table, readme_path=README):
         re.escape(MARKER_START) + r".*?" + re.escape(MARKER_END),
         re.DOTALL,
     )
-    replacement = f"{MARKER_START}\n\n{table.rstrip()}\n\n{MARKER_END}"
+    replacement = f"{MARKER_START}\n\n{report.rstrip()}\n\n{MARKER_END}"
     new_text, n = pattern.subn(replacement, text, count=1)
     if n != 1:
         raise SystemExit(f"{readme_path}: failed to rewrite catalog-status region")
@@ -321,7 +445,6 @@ def _parse_src_map(values):
         if "=" not in item:
             raise SystemExit(f"--src-map expects name[=ref]=path, got {item!r}")
         key, path = item.split("=", 1)
-        # Allow name=ref=path by re-splitting once more when path still has =.
         if "=" in path and not os.path.exists(path):
             ref, path = path.split("=", 1)
             key = f"{key}={ref}"
@@ -349,16 +472,28 @@ def main(argv=None):
         return 2
 
     src_map = _parse_src_map(args.src_map)
-    rows = collect_rows(entries, src_map=src_map)
-    table = render_table(rows)
-    sys.stdout.write(table)
+    shipped_rows, coverage = collect_status(entries, src_map=src_map)
+    report = render_report(shipped_rows, coverage)
+    sys.stdout.write(report)
+    if not report.endswith("\n"):
+        sys.stdout.write("\n")
 
     if args.write_readme:
-        write_readme(table, readme_path=args.readme)
+        write_readme(report, readme_path=args.readme)
         print(f"updated {args.readme}", file=sys.stderr)
 
-    bad = [r for r in rows if r["status"] in ("drift", "error")]
-    return 1 if bad else 0
+    # Fail when sync_ref is not a clean match, or any check errored.
+    bad = []
+    for row in shipped_rows:
+        if row["status"] in ("newer", "older", "diverged", "error"):
+            bad.append(f"{row['catalog']} sync_ref={row['status']}")
+    for result in coverage:
+        if result["status"] == "error":
+            bad.append(f"{result['catalog']}@{result['ref']}=error")
+    if bad:
+        print("catalog-check failed: " + "; ".join(bad), file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

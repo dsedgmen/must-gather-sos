@@ -20,10 +20,11 @@ from catalog_status import (  # noqa: E402
     MARKER_END,
     MARKER_START,
     classify_drift,
-    render_table,
+    collect_status,
+    render_report,
     write_readme,
 )
-from sync_catalog import build_catalog, sync_entry  # noqa: E402
+from sync_catalog import build_catalog, sync_entry, write_catalog  # noqa: E402
 
 
 def _build(tree, name="fixture", **kw):
@@ -117,51 +118,112 @@ class TestClassifyDrift(unittest.TestCase):
     def setUp(self):
         self.shipped = _build("base")
 
-    def test_identical_is_current(self):
+    def test_identical_is_match(self):
         status, notes = classify_drift(self.shipped, _build("base"))
-        self.assertEqual(status, "current")
+        self.assertEqual(status, "match")
         self.assertEqual(notes, "")
 
-    def test_additive_upstream_is_compatible(self):
+    def test_additive_upstream_is_newer(self):
         status, notes = classify_drift(self.shipped, _build("newer"))
-        self.assertEqual(status, "compatible")
-        self.assertIn("+1 plugin (", notes)
+        self.assertEqual(status, "newer")
+        self.assertIn("upstream adds 1 plugin", notes)
         self.assertIn("apirequestcounts", notes)
-        # insights gained since reach: shipped none, ephemeral files/both
-        self.assertIn("since stronger:", notes)
+        self.assertIn("upstream --since stronger:", notes)
 
-    def test_missing_plugin_is_drift(self):
+    def test_weaker_upstream_is_older(self):
         status, notes = classify_drift(self.shipped, _build("weaker"))
-        self.assertEqual(status, "drift")
-        self.assertIn("-1 plugin (monitoring)", notes)
-
-    def test_since_downgrade_is_drift(self):
-        # shipped etcd has pod-logs; weaker etcd has none
-        status, notes = classify_drift(self.shipped, _build("weaker"))
-        self.assertEqual(status, "drift")
-        self.assertIn("since weaker: etcd", notes)
-
-    def test_core_resource_removed_is_drift(self):
-        status, notes = classify_drift(self.shipped, _build("weaker"))
-        self.assertEqual(status, "drift")
-        self.assertIn("core -", notes)
+        self.assertEqual(status, "older")
+        self.assertIn("upstream lacks 1 plugin (monitoring)", notes)
+        self.assertIn("upstream --since weaker: etcd", notes)
+        self.assertIn("upstream lacks", notes)
+        self.assertIn("core resources", notes)
 
 
-class TestReadmeRewrite(unittest.TestCase):
-    def test_render_table_shape(self):
-        table = render_table([{
-            "catalog": "openshift",
-            "ref": "main",
-            "shipped": True,
-            "status": "current",
-            "plugins": 34,
-            "commit": "abc",
-            "notes": "",
-        }])
-        self.assertIn("| Catalog", table)
-        self.assertIn("| openshift", table)
-        self.assertIn("| current", table)
-        self.assertIn("| yes", table)
+class TestCompatReport(unittest.TestCase):
+    """CI-style: build the status tables from local fixture checkouts."""
+
+    def test_report_tables_from_src_map(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # Point a throwaway registry at fixture trees via --src-map.
+            shipped = _build("base")
+            shipped_path = os.path.join(tmp, "fixture.json")
+            write_catalog(shipped, shipped_path)
+            hand = {
+                "catalog_version": 2,
+                "name": "hand",
+                "image": {"default": None, "match": [], "payload": False},
+                "profile": {
+                    "id": "hand",
+                    "detect": "true",
+                    "base_path": "/must-gather",
+                    "source": ["/usr/bin/true"],
+                    "setup": [],
+                    "version": {"banner": "hand", "command": None},
+                    "since": False,
+                    "reduce_logs": False,
+                    "noop_pattern": None,
+                },
+                "source": {
+                    "repo": "https://example.com/hand.git",
+                    "ref": "main",
+                    "commit": "deadbeef",
+                    "synced": "2026-01-01T00:00:00+00:00",
+                },
+                "plugins": {
+                    "one": {
+                        "script": "/usr/bin/gather_one",
+                        "default": True,
+                        "phase": "parallel",
+                        "order": 0,
+                        "description": "stub",
+                        "since": "none",
+                    },
+                },
+            }
+            hand_path = os.path.join(tmp, "hand.json")
+            with open(hand_path, "w", encoding="utf-8") as fh:
+                json.dump(hand, fh)
+
+            registry = os.path.join(tmp, "catalogs.yaml")
+            with open(registry, "w", encoding="utf-8") as fh:
+                fh.write(
+                    "catalogs:\n"
+                    "  - name: fixture\n"
+                    "    sync: openshift-layout\n"
+                    "    repo: https://example.com/must-gather.git\n"
+                    "    sync_ref: base\n"
+                    "    check_refs: [base, newer, weaker]\n"
+                    f"    out: {shipped_path}\n"
+                    "    payload: true\n"
+                    "    image_match: [fixture-must-gather]\n"
+                    "  - name: hand\n"
+                    "    sync: manual\n"
+                    "    repo: https://example.com/hand.git\n"
+                    f"    out: {hand_path}\n"
+                )
+
+            entries = load_registry(registry)
+            src_map = {
+                "fixture=base": os.path.join(FIXTURES, "base"),
+                "fixture=newer": os.path.join(FIXTURES, "newer"),
+                "fixture=weaker": os.path.join(FIXTURES, "weaker"),
+            }
+            shipped_rows, coverage = collect_status(entries, src_map=src_map)
+            report = render_report(shipped_rows, coverage)
+
+            self.assertIn("#### Shipped catalogs", report)
+            self.assertIn("#### Upstream coverage", report)
+            self.assertIn("| fixture", report)
+            self.assertIn("| hand", report)
+            self.assertIn("manual", report)
+
+            by_ref = {r["ref"]: r["status"] for r in coverage}
+            self.assertEqual(by_ref["base"], "match")
+            self.assertEqual(by_ref["newer"], "newer")
+            self.assertEqual(by_ref["weaker"], "older")
+
+            fixture_row = next(r for r in shipped_rows if r["catalog"] == "fixture")
+            self.assertEqual(fixture_row["status"], "match")
 
     def test_write_readme_is_surgical(self):
         before = (
@@ -174,22 +236,16 @@ class TestReadmeRewrite(unittest.TestCase):
             path = os.path.join(tmp, "README.md")
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(before)
-            table = render_table([{
-                "catalog": "acm",
-                "ref": "main",
-                "shipped": True,
-                "status": "manual",
-                "plugins": 10,
-                "commit": "",
-                "notes": "hand-written; not auto-synced",
-            }])
-            write_readme(table, readme_path=path)
+            write_readme(
+                "#### Shipped catalogs\n\n| Catalog | Status |\n"
+                "| ------- | ------ |\n| acm | manual |\n",
+                readme_path=path,
+            )
             with open(path, encoding="utf-8") as fh:
                 text = fh.read()
         self.assertTrue(text.startswith("# Title\n"))
         self.assertTrue(text.endswith("outro\n"))
-        self.assertIn("| acm", text)
-        self.assertIn("manual", text)
+        self.assertIn("| acm | manual |", text)
         self.assertNotIn("old table", text)
         self.assertEqual(text.count(MARKER_START), 1)
         self.assertEqual(text.count(MARKER_END), 1)

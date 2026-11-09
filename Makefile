@@ -16,8 +16,8 @@ help:
 	@echo "make golden          regenerate the golden script fixtures"
 	@echo "make sync-catalog    regenerate the openshift catalog (REF=$(REF))"
 	@echo "make sync-catalogs   regenerate every auto-syncable catalog"
-	@echo "make catalog-status  drift-check all tracked refs; refresh README table"
-	@echo "make catalog-check   drift-check only; fail on drift (no README write)"
+	@echo "make catalog-status  print shipped-catalog + upstream-coverage tables"
+	@echo "make catalog-check   same as status; fail if a sync_ref is stale/error"
 	@echo "make man             preview the man page"
 	@echo "make install         install to PREFIX=$(PREFIX)"
 
@@ -53,7 +53,7 @@ sync-catalogs:
 	@git --no-pager diff --stat -- must_gather_sos/data || true
 
 catalog-status:
-	$(PYTHON) tools/catalog_status.py --write-readme
+	$(PYTHON) tools/catalog_status.py
 
 catalog-check:
 	$(PYTHON) tools/catalog_status.py

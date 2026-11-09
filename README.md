@@ -535,8 +535,8 @@ synced from, and which release branches we track for compatibility, live in
 $ make sync-catalogs             # every auto-syncable catalog at its sync_ref
 $ make sync-catalog              # openshift only, from main
 $ make sync-catalog REF=release-4.19
-$ make catalog-status            # drift-check tracked refs; refresh this table
-$ make catalog-check             # drift-check only; fails on drift
+$ make catalog-status            # print the compatibility tables
+$ make catalog-check             # same check; fails if a sync_ref is stale
 ```
 
 Catalogs are committed, so `--list-plugins` and `--dry-run` work offline and
@@ -546,35 +546,17 @@ sync time. ACM is hand-written (`sync: manual` in the registry) because its
 gather entrypoint has no `named_resources` arrays for the openshift-layout
 parser.
 
-<!-- catalog-status:start -->
+Compatibility against each tracked upstream ref is exercised in CI
+(`.github/workflows/catalog-compat.yml`): offline fixture tests on every PR,
+plus a live matrix that clones each `check_refs` entry and prints two tables
+into the job summary — **Shipped catalogs** (one row per catalog we commit)
+and **Upstream coverage** (catalog × release, cells `match` / `older` /
+`newer` / `diverged` / `error`). The same report is uploaded as the
+`catalog-status` artifact.
 
-| Catalog       | Upstream ref | Shipped | Status  | Plugins | Notes                                                                                                                                                       |
-| ------------- | ------------ | ------- | ------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| openshift     | main         | yes     | current | 33      |                                                                                                                                                             |
-| openshift     | release-4.16 |         | drift   | 25      | -8 plugins (etcd_more, frrk8s, istio +5 more); core -12 resources                                                                                           |
-| openshift     | release-4.17 |         | drift   | 26      | -7 plugins (etcd_more, frrk8s, istio +4 more); core -9 resources                                                                                            |
-| openshift     | release-4.18 |         | drift   | 26      | -7 plugins (etcd_more, frrk8s, istio +4 more); core -8 resources                                                                                            |
-| openshift     | release-4.19 |         | drift   | 28      | -5 plugins (etcd_more, istio, nfd +2 more); core -8 resources                                                                                               |
-| openshift     | release-4.20 |         | drift   | 30      | -3 plugins (nfd, olm_v1, virt); core -8 resources                                                                                                           |
-| openshift     | release-4.21 |         | drift   | 31      | -2 plugins (nfd, virt); core -5 resources                                                                                                                   |
-| openshift     | release-4.22 |         | drift   | 32      | -1 plugin (virt); core -5 resources                                                                                                                         |
-| openshift     | release-4.23 |         | current | 33      |                                                                                                                                                             |
-| better-gather | main         | yes     | current | 33      |                                                                                                                                                             |
-| better-gather | release-4.18 |         | drift   | 26      | -7 plugins (etcd_more, frrk8s, istio +4 more); since weaker: core_dumps, kas_startup_termination_logs; core -8 resources                                    |
-| better-gather | release-4.19 |         | drift   | 28      | -5 plugins (etcd_more, istio, nfd +2 more); since weaker: core_dumps, kas_startup_termination_logs, machineconfigdaemon_termination_logs; core -8 resources |
-| better-gather | release-4.20 |         | drift   | 30      | -3 plugins (nfd, olm_v1, virt); since weaker: core_dumps, kas_startup_termination_logs, machineconfigdaemon_termination_logs; core -8 resources             |
-| better-gather | release-4.21 |         | drift   | 31      | -2 plugins (nfd, virt); since weaker: core_dumps, kas_startup_termination_logs, machineconfigdaemon_termination_logs; core -5 resources                     |
-| better-gather | release-4.22 |         | drift   | 32      | -1 plugin (virt); since weaker: core_dumps, kas_startup_termination_logs, machineconfigdaemon_termination_logs; core -5 resources                           |
-| better-gather | release-4.23 |         | drift   | 33      | since weaker: core_dumps, kas_startup_termination_logs, machineconfigdaemon_termination_logs                                                                |
-| acm           | main         | yes     | manual  | 10      | hand-written; not auto-synced                                                                                                                               |
-
-<!-- catalog-status:end -->
-
-Status meanings: `current` matches the shipped catalog; `compatible` means
-upstream only added plugins/resources or gained `--since` reach (shipped
-catalog still safe); `drift` means a plugin, core resource, or `--since`
-capability the shipped catalog relies on is missing from that ref; `manual`
-is hand-maintained; `error` means the check could not clone or parse.
+```console
+$ must-gather-sos --list-catalogs
+```
 
 Point at a different catalog with `--catalog NAME` or `--catalog PATH`. A
 second catalog ships for [better-gather](https://github.com/dsedgmen/better-gather),
@@ -599,7 +581,7 @@ $ make check           # compile-check, shellcheck, bash -n, unit tests
 $ make test
 $ make golden          # regenerate golden script fixtures after an intended change
 $ make sync-catalogs   # refresh every auto-syncable catalog from upstream
-$ make catalog-status  # re-check release refs and rewrite the catalog table
+$ make catalog-status  # print shipped-catalog + upstream-coverage tables
 ```
 
 The tests need neither a cluster nor network access.
