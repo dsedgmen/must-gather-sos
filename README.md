@@ -1,5 +1,36 @@
 # must-gather-sos
 
+| Check | Status |
+| ----- | ------ |
+| Tests (unit + RPM) | [![RPM build](https://github.com/dsedgmen/must-gather-sos/actions/workflows/rpm-build.yml/badge.svg)](https://github.com/dsedgmen/must-gather-sos/actions/workflows/rpm-build.yml) |
+| Catalog compatibility | [![Catalog compatibility](https://github.com/dsedgmen/must-gather-sos/actions/workflows/catalog-compat.yml/badge.svg)](https://github.com/dsedgmen/must-gather-sos/actions/workflows/catalog-compat.yml) |
+| Security scan | [![Security scan](https://github.com/dsedgmen/must-gather-sos/actions/workflows/security.yml/badge.svg)](https://github.com/dsedgmen/must-gather-sos/actions/workflows/security.yml) |
+| COPR builds | [![COPR](https://copr.fedorainfracloud.org/coprs/dsedgmen/must-gather-sos/package/must-gather-sos/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/dsedgmen/must-gather-sos/) · [el9](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/epel-9-x86_64/) · [el10](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/epel-10-x86_64/) · [f43](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/fedora-43-x86_64/) · [f44](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/fedora-44-x86_64/) · [f45](https://download.copr.fedorainfracloud.org/results/dsedgmen/must-gather-sos/fedora-45-x86_64/) |
+
+<!-- catalog-status:start -->
+
+#### Shipped catalogs
+
+| Catalog       | Sync   | Upstream               | Ref  | Commit       | Synced     | Plugins | Status |
+| ------------- | ------ | ---------------------- | ---- | ------------ | ---------- | ------- | ------ |
+| openshift     | auto   | openshift/must-gather  | main | e2487964fe98 | 2026-10-16 | 33      | match  |
+| better-gather | auto   | dsedgmen/better-gather | main | 172bfe2e6dc6 | 2026-10-16 | 33      | match  |
+| acm           | manual | stolostron/must-gather | main | 41479894400c | 2026-10-27 | 10      | manual |
+
+#### Upstream coverage
+
+How each tracked upstream ref relates to the shipped catalog: `match` identical, `older` upstream is behind (typical for past releases), `newer` upstream has moved on (re-sync), `diverged` changes both ways, `error` check failed.
+
+| Catalog       | main   | 4.16  | 4.17  | 4.18  | 4.19  | 4.20  | 4.21  | 4.22  | 4.23  |
+| ------------- | ------ | ----- | ----- | ----- | ----- | ----- | ----- | ----- | ----- |
+| openshift     | match  | older | older | older | older | older | older | older | match |
+| better-gather | match  | —     | —     | older | older | older | older | older | older |
+| acm           | manual | —     | —     | —     | —     | —     | —     | —     | —     |
+
+<!-- catalog-status:end -->
+
+Install from COPR with `dnf copr enable dsedgmen/must-gather-sos`.
+
 > **Disclaimer:** This is an independent, personal project. It is **not
 > provided, maintained, or supported by Red Hat**, and comes with **no
 > warranty or support** of any kind. Use at your own risk.
