@@ -26,6 +26,7 @@ Each cell is the shipped catalog for that image version: full generate+run of ev
 | **better-gather** (33) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | — | — | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | — |
 | **acm** (10) | — | — | — | — | — | — | — | — | — | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) |
 | **odf** (9) | — | — | — | — | — | — | — | — | — | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) |
+| **better-gather-odf** (9) | — | — | — | — | — | — | — | — | — | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) |
 
 <!-- catalog-status:end -->
 
