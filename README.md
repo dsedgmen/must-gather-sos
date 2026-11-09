@@ -617,8 +617,10 @@ second catalog ships for [better-gather](https://github.com/dsedgmen/better-gath
 a fork of must-gather that applies the window to file collection itself:
 
 ```console
+$ must-gather-sos --image quay.io/example/better-gather:4.20 \
+      --run-namespace <ns> -o audit_logs --since 30m
 $ must-gather-sos --catalog better-gather \
-      --image <better-gather-image> --run-namespace <ns> -o audit_logs --since 30m
+      --image quay.io/example/better-gather --run-namespace <ns> -o audit_logs --since 30m
 ```
 
 Against that image the `--since` warnings correctly go away for the plugins

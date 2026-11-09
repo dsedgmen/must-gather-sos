@@ -302,6 +302,12 @@ class TestImageMatching(unittest.TestCase):
         self.assertIn("ceph", chosen.names)
         self.assertIn("noobaa", chosen.names)
 
+    def test_better_gather_image_selects_versioned_catalog(self):
+        from must_gather_sos.catalog import catalog_for_image
+        chosen = catalog_for_image("quay.io/example/better-gather:4.20")
+        self.assertEqual(chosen.name, "better-gather-4.20")
+        self.assertEqual(chosen.image.version, "4.20")
+
     def test_no_reference_matches_nothing(self):
         self.assertFalse(self.catalog.image.matches(None))
         self.assertFalse(self.catalog.image.matches(""))

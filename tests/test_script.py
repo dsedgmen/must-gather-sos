@@ -36,6 +36,8 @@ CASES = [
     ("acm-hostedcluster.sh", "acm",
      {"only": "hostedcluster", "raw_options": ["hostedcluster.name=hc1"]},
      None, 0),
+    ("odf-defaults.sh", "odf", {}, None, 0),
+    ("odf-dr.sh", "odf", {"only": "dr,ceph"}, None, 0),
 ]
 
 
@@ -121,14 +123,22 @@ class TestSyntax(ScriptTestCase):
 
 class TestContent(ScriptTestCase):
     def test_since_plumbing_is_present_wherever_the_image_has_it(self):
-        # Sourcing common.sh is what makes oc's MUST_GATHER_SINCE reach the
-        # collection. An image without one (ACM) must not pretend to have it.
+        # Profile.source is what makes --since reach the collection (common.sh
+        # for openshift, utils.sh for ODF). An image without one (ACM) must
+        # not pretend to have it.
         for name, cat, kwargs, reduce_logs, jobs in CASES:
             with self.subTest(case=name):
                 text = self.for_case(cat, kwargs, reduce_logs, jobs)
-                if Catalog.load(cat).profile.since:
-                    self.assertIn("source /usr/bin/common.sh", text)
-                    self.assertIn("get_log_collection_args", text)
+                profile = Catalog.load(cat).profile
+                if profile.since:
+                    for path in profile.source:
+                        self.assertIn(f"source {path}", text)
+                    # openshift-layout: get_log_collection_args; ODF: parse_since_time
+                    self.assertTrue(
+                        "get_log_collection_args" in text
+                        or "parse_since_time" in text,
+                        "since=true profile must wire a since helper",
+                    )
                 else:
                     self.assertNotIn("/usr/bin/common.sh", text)
 

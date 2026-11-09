@@ -51,8 +51,9 @@ catalogs:
       - release-4.21
       - release-4.22
       - release-4.23
-    # Select by --catalog name; no image substring of its own.
-    image_match: []
+    # Distinct image name (quay.io/.../better-gather:…); not origin-must-gather.
+    image_match:
+      - better-gather
 
   - name: acm
     sync: manual
