@@ -1,6 +1,6 @@
 Name:           must-gather-sos
 Version:        0.1.0
-Release:        2%{?dist}
+Release:        3%{?dist}
 Summary:        An sos-style front end for 'oc adm must-gather'
 
 License:        Apache-2.0
@@ -17,6 +17,9 @@ BuildRequires:  python3-pip
 BuildRequires:  python3-setuptools
 BuildRequires:  python3-wheel
 BuildRequires:  pyproject-rpm-macros
+# tools/catalog_registry.py (pulled in by tests.test_catalog_sync) reads
+# tools/catalogs.yaml; not a runtime dependency of the installed package.
+BuildRequires:  python3-pyyaml
 
 # %%check exercises the in-pod progress library (data/task_common.sh) by
 # running it, so the shell tools it uses have to be in the buildroot.
@@ -60,6 +63,9 @@ install -Dm644 share/completion/_must-gather-sos \
 %{_datadir}/zsh/site-functions/_must-gather-sos
 
 %changelog
+* Mon Nov 9 2026 David Sedgmen <dsedgmen@redhat.com> - 0.1.0-3
+- BuildRequires python3-pyyaml so %%check can import tools/catalog_registry.
+
 * Mon Nov 9 2026 David Sedgmen <dsedgmen@redhat.com> - 0.1.0-2
 - Ship setup.cfg so EL9 setuptools can build the wheel (was UNKNOWN-0.0.0).
 
