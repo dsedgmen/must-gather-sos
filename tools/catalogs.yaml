@@ -58,3 +58,12 @@ catalogs:
     sync: manual
     repo: https://github.com/stolostron/must-gather.git
     out: must_gather_sos/data/acm.json
+
+  - name: odf
+    sync: manual
+    # Flag-driven gather (-o/-d/-n/…); leaf scripts mapped by hand in odf.json.
+    repo: https://github.com/red-hat-storage/odf-must-gather.git
+    out: must_gather_sos/data/odf.json
+    image_match:
+      - odf-must-gather
+      - ocs-must-gather

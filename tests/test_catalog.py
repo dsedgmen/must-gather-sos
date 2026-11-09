@@ -290,6 +290,17 @@ class TestImageMatching(unittest.TestCase):
     def test_does_not_claim_another_products_must_gather(self):
         self.assertFalse(self.catalog.image.matches(
             "registry.redhat.io/rhacm2/acm-must-gather-rhel9:v2.14"))
+        self.assertFalse(self.catalog.image.matches(
+            "registry.redhat.io/odf4/odf-must-gather-rhel9:v4.22"))
+
+    def test_odf_image_selects_the_odf_catalog(self):
+        from must_gather_sos.catalog import catalog_for_image
+        chosen = catalog_for_image(
+            "registry.redhat.io/odf4/odf-must-gather-rhel9:v4.22")
+        self.assertEqual(chosen.name, "odf")
+        self.assertEqual(chosen.profile.id, "odf")
+        self.assertIn("ceph", chosen.names)
+        self.assertIn("noobaa", chosen.names)
 
     def test_no_reference_matches_nothing(self):
         self.assertFalse(self.catalog.image.matches(None))

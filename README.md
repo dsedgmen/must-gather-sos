@@ -25,6 +25,7 @@ Each cell is the shipped catalog for that image version: full generate+run of ev
 | **openshift** (33) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | — |
 | **better-gather** (33) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | — | — | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) | — |
 | **acm** (10) | — | — | — | — | — | — | — | — | — | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) |
+| **odf** (9) | — | — | — | — | — | — | — | — | — | ![pass](https://img.shields.io/badge/pass-2ea44f?style=flat-square) |
 
 <!-- catalog-status:end -->
 
@@ -329,12 +330,14 @@ branch per image family and works out at runtime which one it woke up in:
 mgs_detect() {
 	if [ -f /usr/bin/common.sh ]; then echo openshift; return 0; fi
 	if [ -f /usr/bin/gather_utils ]; then echo acm; return 0; fi
+	if [ -f /usr/bin/gather_ceph_resources ]; then echo odf; return 0; fi
 	return 1
 }
 
 case "$(mgs_detect)" in
 openshift) mgs_run_openshift ;;
 acm)       mgs_run_acm ;;
+odf)       mgs_run_odf ;;
 *)         echo "must-gather-sos: running its own entrypoint instead."
            exec /usr/bin/gather ;;
 esac
@@ -381,6 +384,24 @@ catalogs carry a runtime *profile* rather than assuming upstream's layout:
   profile runs the same `check_if_*` detection before collecting. Without
   that the plugins would collect nothing — and since an empty log reads as
   `no-op`, they would do it quietly.
+
+### ODF
+
+The ODF catalog covers
+[`red-hat-storage/odf-must-gather`](https://github.com/red-hat-storage/odf-must-gather)
+(`registry.redhat.io/odf4/odf-must-gather-rhel9`). Upstream's `/usr/bin/gather`
+is flag-driven (`-o`/`-d`/`-n`/…); the plugins are the leaf scripts those
+flags run. The default set matches `gather_main` (no flags).
+
+```console
+$ must-gather-sos --image registry.redhat.io/odf4/odf-must-gather-rhel9:v4.22
+$ must-gather-sos --catalog odf -o ceph,ceph_logs,noobaa
+$ must-gather-sos --catalog odf -o namespaced,clusterscoped,dr --since 2h
+```
+
+`--since` reaches ODF through `utils.sh` (`LOG_FILTER_ARGS` /
+`JCTL_FILTER_ARGS`). `--reduce-logs` does nothing here — there is no
+`compress_logs`.
 
 ACS is **not** supported. There is no official Red Hat ACS must-gather image;
 the documented route is `roxctl central debug download-diagnostics`, a
@@ -578,9 +599,9 @@ $ make catalog-check             # same check; non-zero on any fail/error
 Catalogs are committed, so `--list-plugins` and `--dry-run` work offline and
 every resync is a reviewable diff. Human descriptions and plugin option specs
 live in the `OVERLAY` table in `tools/sync_catalog.py` and are merged in at
-sync time. ACM is hand-written (`sync: manual` in the registry) because its
-gather entrypoint has no `named_resources` arrays for the openshift-layout
-parser.
+sync time. ACM and ODF are hand-written (`sync: manual` in the registry)
+because their gather entrypoints are not the openshift-layout
+`named_resources` form the sync tool parses.
 
 Compatibility of each shipped catalog is exercised in CI
 (`.github/workflows/catalog-compat.yml`): offline fixture tests on every PR,
