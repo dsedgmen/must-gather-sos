@@ -180,6 +180,19 @@ exit. Needs no cluster.
 .B \-\-print\-script
 Print only the generated in\-pod script, then exit. Needs no cluster.
 .TP
+.B \-\-print\-mustgather
+Print a
+.B MustGather
+CR (\fBoperator.openshift.io/v1\fR) for
+.I openshift/must\-gather\-operator
+that runs the selected plugins, then exit. Needs no cluster. Maps
+\fB\-\-since\fR / \fB\-\-since\-time\fR / \fB\-\-timeout\fR / \fB\-\-case\-id\fR
+onto the CR and embeds the generated script as base64 chunks in
+\fBgatherSpec.args\fR. Does not install the operator or apply the CR.
+Related flags: \fB\-\-mustgather\-name\fR, \fB\-\-mustgather\-namespace\fR,
+\fB\-\-service\-account\fR, \fB\-\-case\-secret\fR, \fB\-\-internal\-user\fR,
+\fB\-\-obfuscate\fR.
+.TP
 .B \-\-plain\-progress
 Use the original must\-gather progress instead of the sos\-style plan,
 \fI[n/total]\fR lines, per\-task logs and summary. Plugin stdout stays on the
@@ -303,6 +316,12 @@ A bundle to attach to a support case:
 .PP
 .RS
 .B must-gather-sos \-o core,etcd \-\-case\-id 04123456 \-\-archive
+.RE
+.PP
+Emit a MustGather CR for the in\-cluster operator instead of running \fBoc\fR:
+.PP
+.RS
+.B must-gather-sos \-o core,etcd \-\-since 2h \-\-case\-id 04123456 \-\-print\-mustgather
 .RE
 .SH FILES
 .TP
