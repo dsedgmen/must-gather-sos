@@ -1,0 +1,17 @@
+###MGS_INSPECT_BEGIN###
+###SCRIPTS###
+/usr/bin/gather
+/usr/bin/gather_ctlplane_resources
+/usr/bin/gather_sos
+/usr/bin/gather_edpm_sos
+###LIBS###
+/usr/bin/common.sh
+/usr/bin/gather
+###GATHER###
+#!/bin/bash
+# openstack entrypoint
+/usr/bin/gather_ctlplane_resources &
+/usr/bin/gather_sos &
+wait "${pids[@]}"
+
+###MGS_INSPECT_END###

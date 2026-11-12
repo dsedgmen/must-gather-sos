@@ -12,6 +12,7 @@ import textwrap
 from . import PROG, UserError, __version__
 from . import archive as archive_mod
 from . import catalog as catalog_mod
+from . import cluster_catalog as cluster_catalog_mod
 from . import manifest as manifest_mod
 from . import namespace as namespace_mod
 from . import runner, script
@@ -35,6 +36,8 @@ examples:
   %(prog)s --limit-resources -o core,etcd   capped CPU/memory in its own namespace
   %(prog)s --limit-resources --print-command
   %(prog)s --list-plugins
+  %(prog)s --generate-cluster-catalog
+  %(prog)s --generate-cluster-catalog ./cats --experimental-inspect-catalogs
 """
 
 
@@ -63,6 +66,27 @@ def build_parser():
     selection.add_argument("--list-catalogs", action="store_true",
                            help="list the built-in plugin catalogs and the "
                                 "images they describe, and exit")
+    selection.add_argument(
+        "--generate-cluster-catalog",
+        nargs="?",
+        const=cluster_catalog_mod.DEFAULT_DEST,
+        metavar="DIR",
+        default=None,
+        help="discover must-gather images advertised on the connected "
+             "cluster and write a local catalog directory for them "
+             f"(default {cluster_catalog_mod.DEFAULT_DEST}). Known families "
+             "reuse shipped plugin metadata with image.default pinned to "
+             "the cluster's image; unmatched images are listed in "
+             "index.json. Requires cluster access",
+    )
+    selection.add_argument(
+        "--experimental-inspect-catalogs",
+        action="store_true",
+        help="experimental: with --generate-cluster-catalog, also inspect "
+             "unmatched must-gather images via short-lived pods and "
+             "auto-generate plugin catalogs from their contents. Heuristics "
+             "may change; not a stable interface",
+    )
     selection.add_argument("-o", "--only-plugins", metavar="LIST", default="",
                            help="run only these plugins (comma separated); "
                                 "where the catalog has a 'core' plugin, "
@@ -176,6 +200,11 @@ def build_parser():
 
 
 def validate(args):
+    if (getattr(args, "experimental_inspect_catalogs", False)
+            and not getattr(args, "generate_cluster_catalog", None)):
+        raise UserError(
+            "--experimental-inspect-catalogs requires --generate-cluster-catalog"
+        )
     if args.since and args.since_time:
         raise UserError("--since and --since-time are mutually exclusive")
     if args.since and not _DURATION.match(args.since):
@@ -595,6 +624,19 @@ def _resource_limits(args):
 def _run(args):
     if args.list_catalogs:
         return list_catalogs()
+
+    if getattr(args, "experimental_inspect_catalogs", False) and not args.generate_cluster_catalog:
+        raise UserError(
+            "--experimental-inspect-catalogs requires --generate-cluster-catalog"
+        )
+
+    if args.generate_cluster_catalog is not None:
+        cluster_catalog_mod.generate_cluster_catalog(
+            dest_dir=args.generate_cluster_catalog,
+            oc=args.oc,
+            experimental_inspect=bool(args.experimental_inspect_catalogs),
+        )
+        return 0
 
     # The listing modes describe one catalog; a pinned --catalog IMAGE=NAME
     # has no meaning there, so take the plain one. With no --catalog, prefer

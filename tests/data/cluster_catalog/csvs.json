@@ -1,0 +1,77 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "namespace": "openshift-storage",
+        "name": "odf-operator.v4.18.0",
+        "annotations": {
+          "operators.openshift.io/must-gather-image": "registry.redhat.io/odf4/odf-must-gather-rhel9@sha256:aaa"
+        }
+      },
+      "spec": {
+        "relatedImages": [
+          {
+            "name": "odf-must-gather",
+            "image": "registry.redhat.io/odf4/odf-must-gather-rhel9@sha256:aaa"
+          }
+        ]
+      },
+      "status": {
+        "phase": "Succeeded"
+      }
+    },
+    {
+      "metadata": {
+        "namespace": "openshift-cnv",
+        "name": "kubevirt-hyperconverged-operator.v4.18.0",
+        "annotations": {
+          "operators.openshift.io/must-gather-image": "registry.redhat.io/container-native-virtualization/cnv-must-gather-rhel9@sha256:bbb"
+        }
+      },
+      "spec": {
+        "relatedImages": [
+          {
+            "name": "registry.redhat.io/container-native-virtualization/cnv-must-gather-rhel9@sha256:bbb",
+            "image": "registry.redhat.io/container-native-virtualization/cnv-must-gather-rhel9@sha256:bbb"
+          }
+        ]
+      },
+      "status": {
+        "phase": "Succeeded"
+      }
+    },
+    {
+      "metadata": {
+        "namespace": "openshift-local-storage",
+        "name": "local-storage-operator.v4.18.0",
+        "annotations": {
+          "operators.openshift.io/must-gather-image": "registry.redhat.io/openshift4/ose-local-storage-mustgather-rhel9@sha256:ccc"
+        }
+      },
+      "spec": {
+        "relatedImages": []
+      },
+      "status": {
+        "phase": "Succeeded"
+      }
+    },
+    {
+      "metadata": {
+        "namespace": "openstack-operators",
+        "name": "openstack-operator.v1.22.1",
+        "annotations": {}
+      },
+      "spec": {
+        "relatedImages": [
+          {
+            "name": "openstack-must-gather-default",
+            "image": "registry.redhat.io/rhoso-operators/openstack-must-gather-rhel9@sha256:ddd"
+          }
+        ]
+      },
+      "status": {
+        "phase": "Succeeded"
+      }
+    }
+  ]
+}
