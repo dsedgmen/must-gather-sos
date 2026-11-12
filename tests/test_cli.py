@@ -75,6 +75,15 @@ class TestDryRun(unittest.TestCase):
             which.assert_not_called()
             check.assert_not_called()
 
+    def test_dry_run_with_limit_resources_shows_create_and_cleanup(self):
+        _, out, _ = run_cli("-o", "core", "--limit-resources", "--dry-run")
+        self.assertIn("--- limited namespace ---", out)
+        self.assertIn("--- create namespace ---", out)
+        self.assertIn("oc create namespace must-gather-sos", out)
+        self.assertIn("--- clean up namespace ---", out)
+        self.assertIn("oc delete namespace must-gather-sos", out)
+        self.assertIn("--run-namespace=must-gather-sos", out)
+
     def test_skipped_plugins_are_reported(self):
         _, out, _ = run_cli("-n", "monitoring,istio", "--dry-run")
         self.assertRegex(out, r"skipping \(\d+\):.*istio")
@@ -103,7 +112,8 @@ class TestErrors(unittest.TestCase):
 class TestValidate(unittest.TestCase):
     def validate(self, **overrides):
         defaults = dict(since=None, since_time=None, image=[],
-                        volume_percentage=None, reduce_logs="", jobs=[])
+                        volume_percentage=None, reduce_logs="", jobs=[],
+                        limit_resources=False, cpu=None, memory=None)
         defaults.update(overrides)
         return cli.validate(argparse.Namespace(**defaults))
 
@@ -141,6 +151,14 @@ class TestValidate(unittest.TestCase):
 
     def test_jobs_can_name_an_image(self):
         self.validate(jobs=["4", "quay.io/x/mg:1=2"])
+
+    def test_cpu_and_memory_require_limit_resources(self):
+        with self.assertRaises(UserError) as ctx:
+            self.validate(cpu="1")
+        self.assertIn("--limit-resources", str(ctx.exception))
+        with self.assertRaises(UserError):
+            self.validate(memory="4Gi")
+        self.validate(limit_resources=True, cpu="1", memory="4Gi")
 
 
 class TestFullRun(unittest.TestCase):
@@ -259,6 +277,31 @@ class TestFullRun(unittest.TestCase):
         self.assertFalse(os.path.exists(
             os.path.join(self.inner, manifest.MANIFEST_NAME)))
 
+    def test_limit_resources_sets_up_and_cleans_up_the_namespace(self):
+        with mock.patch("must_gather_sos.namespace.setup",
+                        return_value=True) as setup, \
+             mock.patch("must_gather_sos.namespace.cleanup") as cleanup:
+            code, _, err, execute = self.run_collect("--limit-resources")
+        self.assertEqual(code, 0)
+        setup.assert_called_once()
+        self.assertEqual(setup.call_args[0][1], "must-gather-sos")
+        cleanup.assert_called_once_with(
+            mock.ANY, "must-gather-sos", delete_namespace=True)
+        # The gather itself must target that namespace.
+        oc_argv = execute.call_args[0][0]
+        self.assertIn("--run-namespace=must-gather-sos", oc_argv)
+        self.assertIn("limited namespace: must-gather-sos", err)
+
+    def test_limit_resources_keeps_a_user_named_existing_namespace(self):
+        with mock.patch("must_gather_sos.namespace.setup",
+                        return_value=False) as setup, \
+             mock.patch("must_gather_sos.namespace.cleanup") as cleanup:
+            self.run_collect("--limit-resources",
+                             "--run-namespace", "already-there")
+        setup.assert_called_once()
+        cleanup.assert_called_once_with(
+            mock.ANY, "already-there", delete_namespace=False)
+
     def test_archive_created_and_named_with_case_id(self):
         code, out, _, _ = self.run_collect("--case-id", "04123456", "--archive")
         self.assertEqual(code, 0)
@@ -319,6 +362,45 @@ class TestPrintModes(unittest.TestCase):
         self.assertIn("--since=2h", argv)
         self.assertEqual(argv.index("--"), len(argv) - 2)
 
+    def test_print_command_with_limit_resources_prints_create_and_cleanup(self):
+        code, out, err = run_cli(
+            "-o", "etcd", "--dest-dir", "/tmp/x",
+            "--limit-resources", "--print-command",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertIn("# create the limited run namespace", out)
+        self.assertIn("oc create namespace must-gather-sos", out)
+        self.assertIn(
+            "oc adm policy add-cluster-role-to-user cluster-admin "
+            "system:serviceaccount:must-gather-sos:default",
+            out,
+        )
+        self.assertIn("kind: LimitRange", out)
+        self.assertIn("cpu: 500m", out)
+        self.assertIn("memory: 2Gi", out)
+        self.assertIn("# gather", out)
+        self.assertIn("--run-namespace=must-gather-sos", out)
+        self.assertIn("# clean up", out)
+        self.assertIn(
+            "oc adm policy remove-cluster-role-from-user cluster-admin "
+            "system:serviceaccount:must-gather-sos:default",
+            out,
+        )
+        self.assertIn("oc delete namespace must-gather-sos", out)
+
+    def test_print_command_honours_custom_limits_and_namespace(self):
+        _, out, _ = run_cli(
+            "-o", "etcd", "--dest-dir", "/tmp/x",
+            "--limit-resources", "--run-namespace", "mg-limited",
+            "--cpu", "1", "--memory", "4Gi", "--print-command",
+        )
+        self.assertIn("oc create namespace mg-limited", out)
+        self.assertIn("--run-namespace=mg-limited", out)
+        self.assertIn("cpu: 1", out)
+        self.assertIn("memory: 4Gi", out)
+        self.assertIn("oc delete namespace mg-limited", out)
+
     def test_print_script_emits_only_the_script(self):
         code, out, err = run_cli("-o", "etcd", "--print-script")
         self.assertEqual(code, 0)
@@ -331,6 +413,7 @@ class TestPrintModes(unittest.TestCase):
         with mock.patch("must_gather_sos.runner.check_cluster") as check:
             run_cli("-o", "core", "--print-command")
             run_cli("-o", "core", "--print-script")
+            run_cli("-o", "core", "--limit-resources", "--print-command")
             check.assert_not_called()
 
 
@@ -477,7 +560,8 @@ class TestTargets(unittest.TestCase):
         with self.assertRaises(UserError) as ctx:
             cli.validate(argparse.Namespace(
                 since=None, since_time=None, image=[self.ACM, self.ACM],
-                volume_percentage=None, reduce_logs="", jobs=[]))
+                volume_percentage=None, reduce_logs="", jobs=[],
+                limit_resources=False, cpu=None, memory=None))
         self.assertIn("twice", str(ctx.exception))
 
 
