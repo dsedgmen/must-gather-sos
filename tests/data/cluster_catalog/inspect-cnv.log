@@ -1,0 +1,43 @@
+some pull noise
+###MGS_INSPECT_BEGIN###
+###SCRIPTS###
+/usr/bin/gather
+/usr/bin/gather_apiservices
+/usr/bin/gather_cdi
+/usr/bin/gather_crds
+/usr/bin/gather_etcd
+/usr/bin/gather_hco
+/usr/bin/gather_images
+/usr/bin/gather_nodes
+/usr/bin/gather_vms_details
+/usr/bin/gather_service_logs_util
+###LIBS###
+/usr/bin/common.sh
+/usr/bin/gather
+/usr/bin/version
+###GATHER###
+#!/bin/bash
+export BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+function main() {
+  declare mandatory_scripts=(
+    "apiservices"
+    "cdi"
+    "crds"
+    "hco"
+    "nodes"
+  )
+  parse_flags "$@"
+  run_scripts
+}
+function parse_flags {
+  while :; do
+    case $1 in
+      --images) requested_scripts+=("images") ;;
+      --vms_details) requested_scripts+=("vms_details") ;;
+      *) break ;;
+    esac
+    shift
+  done
+}
+
+###MGS_INSPECT_END###

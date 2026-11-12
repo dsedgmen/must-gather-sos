@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "name": "must-gather",
+    "namespace": "openshift"
+  },
+  "status": {
+    "dockerImageRepository": "image-registry.openshift-image-registry.svc:5000/openshift/must-gather",
+    "tags": [
+      {
+        "tag": "latest",
+        "items": [
+          {
+            "dockerImageReference": "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:payload"
+          }
+        ]
+      }
+    ]
+  }
+}

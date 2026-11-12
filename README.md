@@ -310,6 +310,34 @@ for the **cluster's OpenShift version** is used. See `--list-catalogs`.
 | `--catalog NAME --image IMG` | they pair — the long-standing fork workflow |
 | `--catalog IMG=NAME` | pins `NAME` to `IMG`; repeatable |
 
+### Local catalogs for this cluster
+
+`--generate-cluster-catalog` asks the connected cluster which must-gather
+images it advertises (payload ImageStream, CSV
+`operators.openshift.io/must-gather-image` annotations, and relatedImages)
+and writes a local directory of catalogs for **those** images — not a dump
+of every catalog shipped in the package. Known families reuse shipped plugin
+metadata with `image.default` pinned to the cluster's image ref; unmatched
+images are listed in `index.json`.
+
+```console
+$ must-gather-sos --generate-cluster-catalog
+$ must-gather-sos --generate-cluster-catalog ./my-cluster-catalogs
+$ must-gather-sos --catalog ./my-cluster-catalogs/odf.json --list-plugins
+```
+
+#### Experimental: auto-generate unmatched catalogs
+
+`--experimental-inspect-catalogs` (only with `--generate-cluster-catalog`)
+runs a short-lived pod for each unmatched image and builds a plugin catalog
+from `/usr/bin/gather_*` and `/usr/bin/gather` inside that image. Heuristics
+may change; generated files are labeled experimental in `index.json`.
+
+```console
+$ must-gather-sos --generate-cluster-catalog ./cats \
+      --experimental-inspect-catalogs
+```
+
 `-o`, `-n`, `-e` and `-k` are **global**: a name has to exist in *some*
 selected catalog, and simply does not apply to the images that lack it. Above,
 `-n monitoring` skips OpenShift's monitoring plugin and means nothing to ACM.
