@@ -58,12 +58,15 @@ class ScriptTestCase(unittest.TestCase):
         cls.catalog = Catalog.load()
 
     def generate(self, reduce_logs=None, jobs=0, catalog=None,
-                 progress=script.PROGRESS_SOS, **kwargs):
+                 progress=script.PROGRESS_SOS,
+                 skip_namespaces=(), enable_namespaces=(), **kwargs):
         catalog = catalog or self.catalog
         selection = build_selection(catalog, **kwargs)
         return script.generate(catalog, selection,
                                reduce_logs=reduce_logs, jobs=jobs,
-                               progress=progress)
+                               progress=progress,
+                               skip_namespaces=skip_namespaces,
+                               enable_namespaces=enable_namespaces)
 
     def for_case(self, cat, kwargs, reduce_logs, jobs):
         return self.generate(catalog=Catalog.load(cat), reduce_logs=reduce_logs,
@@ -156,6 +159,23 @@ class TestContent(ScriptTestCase):
         self.assertNotIn(inspect, without_core)
         self.assertIn("named_resources=(", with_core)
         self.assertNotIn("named_resources=(", without_core)
+
+    def test_skip_namespaces_drops_named_entries(self):
+        text = self.generate(only="core",
+                             skip_namespaces=["assisted-installer"])
+        line = next(ln for ln in text.splitlines()
+                    if ln.startswith("named_resources="))
+        self.assertNotIn("ns/assisted-installer", line)
+        self.assertIn("ns/openshift", line)
+
+    def test_enable_namespaces_appends_named_entries(self):
+        text = self.generate(only="core",
+                             enable_namespaces=["openshift-monitoring"])
+        line = next(ln for ln in text.splitlines()
+                    if ln.startswith("named_resources="))
+        self.assertIn("ns/openshift-monitoring", line)
+        # Still ends with the new entry after the catalog defaults.
+        self.assertTrue(line.rstrip(")").endswith("ns/openshift-monitoring"))
 
     def test_core_inspect_uses_log_collection_args(self):
         text = self.generate(only="core")
@@ -355,6 +375,48 @@ class TestProgress(ScriptTestCase):
         self.assertLess(etcd, waits[0])
         self.assertLess(waits[0], aro)
         self.assertLess(aro, waits[1])
+
+
+class TestAdjustNamedResources(unittest.TestCase):
+    def test_normalize_bare_names(self):
+        self.assertEqual(
+            script.adjust_named_resources(
+                ["ns/default"], enable=["openshift-monitoring"]),
+            ["ns/default", "ns/openshift-monitoring"],
+        )
+
+    def test_preserves_qualified_names(self):
+        self.assertEqual(
+            script.adjust_named_resources(
+                [], enable=["ns/foo", "pod/bar"]),
+            ["ns/foo", "pod/bar"],
+        )
+
+    def test_skip_wins_over_enable(self):
+        self.assertEqual(
+            script.adjust_named_resources(
+                ["ns/a", "ns/b"],
+                skip=["b"],
+                enable=["b", "c"],
+            ),
+            ["ns/a", "ns/c"],
+        )
+
+    def test_dedupes_and_keeps_default_order(self):
+        self.assertEqual(
+            script.adjust_named_resources(
+                ["ns/a", "ns/b"],
+                enable=["ns/b", "ns/c", "c"],
+            ),
+            ["ns/a", "ns/b", "ns/c"],
+        )
+
+    def test_empty_inputs_are_a_noop(self):
+        self.assertEqual(
+            script.adjust_named_resources(["ns/a"]),
+            ["ns/a"],
+        )
+        self.assertEqual(script.adjust_named_resources(None), [])
 
 
 if __name__ == "__main__":

@@ -427,6 +427,32 @@ class TestPrintModes(unittest.TestCase):
         self.assertIn("--jobs has no effect with --plain-progress", out)
         self.assertNotIn("jobs: 4", out)
 
+    def test_skip_and_enable_namespaces_reach_the_script(self):
+        code, out, _ = run_cli(
+            "-o", "core",
+            "--skip-namespaces", "assisted-installer,kube-system",
+            "--enable-namespaces", "openshift-monitoring",
+            "--print-script",
+        )
+        self.assertEqual(code, 0)
+        line = next(ln for ln in out.splitlines()
+                    if ln.startswith("named_resources="))
+        self.assertNotIn("ns/assisted-installer", line)
+        self.assertNotIn("ns/kube-system", line)
+        self.assertIn("ns/openshift-monitoring", line)
+        self.assertIn("ns/openshift", line)
+
+    def test_namespace_flags_are_threaded_onto_targets(self):
+        defaults = dict(image=[], catalog=[], jobs=[], only_plugins="core",
+                        skip_plugins="", enable_plugins="", all_plugins=False,
+                        plugin_options=[],
+                        skip_namespaces="assisted-installer",
+                        enable_namespaces="my-app")
+        with captured():
+            targets = cli.build_targets(argparse.Namespace(**defaults), None)
+        self.assertEqual(targets[0].skip_namespaces, ["assisted-installer"])
+        self.assertEqual(targets[0].enable_namespaces, ["my-app"])
+
     def test_print_modes_need_no_cluster(self):
         with mock.patch("must_gather_sos.runner.check_cluster") as check:
             run_cli("-o", "core", "--print-command")

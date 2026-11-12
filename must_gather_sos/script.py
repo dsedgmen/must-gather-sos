@@ -33,8 +33,13 @@ from .catalog import CORE
 #: One image's share of a run: which catalog describes it, which of its
 #: plugins were selected, the knobs that are per-image, and the --image
 #: reference itself (None when oc is left to pick the payload's own).
-Target = namedtuple("Target", "catalog selection reduce_logs jobs image_ref")
-Target.__new__.__defaults__ = (None, 0, None)
+#: skip_namespaces / enable_namespaces adjust core named_resources only.
+Target = namedtuple(
+    "Target",
+    "catalog selection reduce_logs jobs image_ref "
+    "skip_namespaces enable_namespaces",
+)
+Target.__new__.__defaults__ = (None, 0, None, (), ())
 
 #: Written into each collection directory by a dispatching script, naming the
 #: branch that ran. oc names its output directories after the resolved image
@@ -239,6 +244,36 @@ def _bash_array(items):
     return " ".join(shlex.quote(item) for item in items)
 
 
+def _normalize_named_resource(name):
+    """Bare namespace names become ``ns/<name>``; already-qualified stay as-is."""
+    name = name.strip()
+    if not name:
+        return name
+    if "/" in name:
+        return name
+    return f"ns/{name}"
+
+
+def adjust_named_resources(named, skip=(), enable=()):
+    """Apply ``--enable-namespaces`` then ``--skip-namespaces`` to a named list.
+
+    Order is ``(defaults ∪ enable) − skip``: defaults keep their catalog order,
+    enables append when new, duplicates are dropped, and skip wins over enable.
+    """
+    skip_set = {_normalize_named_resource(item) for item in (skip or ()) if item}
+    skip_set.discard("")
+
+    out = []
+    seen = set()
+    for item in list(named or []) + list(enable or []):
+        resource = _normalize_named_resource(item)
+        if not resource or resource in seen or resource in skip_set:
+            continue
+        seen.add(resource)
+        out.append(resource)
+    return out
+
+
 #: Runs a command with extra environment, where that command may be a shell
 #: function. Emitted only when some selected plugin needs it. env(1) can only
 #: exec a real binary, and some plugins are shell functions the image's
@@ -394,10 +429,15 @@ def _collection(target, mark_profile=False, progress=PROGRESS_SOS):
 
     if selection.core_selected:
         core = catalog.core_resources
+        named = adjust_named_resources(
+            core["named_resources"],
+            skip=target.skip_namespaces,
+            enable=target.enable_namespaces,
+        )
         out.append("\n")
         out.append(
             _CORE.format(
-                named=_bash_array(core["named_resources"]),
+                named=_bash_array(named),
                 group=_bash_array(core["group_resources"]),
                 all_ns=_bash_array(core["all_ns_resources"]),
                 run=run,
@@ -437,10 +477,14 @@ def _library_block(progress=PROGRESS_SOS):
 
 
 def generate(catalog, selection, reduce_logs=None, jobs=0,
-             progress=PROGRESS_SOS):
+             progress=PROGRESS_SOS, skip_namespaces=(), enable_namespaces=()):
     """The in-pod program for a single image."""
     return generate_targets(
-        [Target(catalog, selection, reduce_logs, jobs)],
+        [Target(
+            catalog, selection, reduce_logs, jobs, None,
+            tuple(skip_namespaces or ()),
+            tuple(enable_namespaces or ()),
+        )],
         progress=progress,
     )
 

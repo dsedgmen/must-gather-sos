@@ -128,6 +128,17 @@ upstream's \fBgather\fR does. Use it when a cluster cannot take two dozen
 script as \fBTASK_JOBS\fR, so \fB\-\-print\-script\fR shows it; a task
 waiting for a slot has not started, and so is neither reported as running
 nor charged for the wait.
+.TP
+.B \-\-skip\-namespaces " \fILIST\fR"
+Omit these namespaces from the core named \fBoc adm inspect\fR pass
+(\fBcore:named\fR). Comma or whitespace separated. Bare names such as
+\fBopenshift\-monitoring\fR are treated as \fBns/openshift\-monitoring\fR.
+Does not affect \fBcore:all\-namespaces\fR or per\-plugin collection.
+.TP
+.B \-\-enable\-namespaces " \fILIST\fR"
+Also inspect these namespaces in the core named pass, appended to the
+catalog defaults. Same list form as \fB\-\-skip\-namespaces\fR. When a name
+appears in both flags, skip wins.
 .SS Output
 .TP
 .B \-\-dest\-dir " \fIDIR\fR"
