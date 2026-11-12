@@ -233,6 +233,9 @@ $ must-gather-sos -o etcd --since 30m --print-command
 oc adm must-gather --dest-dir=must-gather.local.123 --since=30m -- "echo 'IyEvYmlu...' | base64 -d >/tmp/must-gather-sos.sh && bash /tmp/must-gather-sos.sh"
 ```
 
+With `--limit-resources` it also prints the commands to create and clean up
+the limited run namespace (see [Limiting CPU and memory](#limiting-cpu-and-memory)).
+
 Pipe it through `--print-script` to read what that base64 actually is.
 
 ### The quoting problem
@@ -483,6 +486,45 @@ Four things follow from that:
   and suggests pinning the matching tag or `-n`.
 - **A slow task does not look like a hang.** Every 30 seconds
   (`TASK_HEARTBEAT`) the run says what is still going and for how long.
+
+### Limiting CPU and memory
+
+`oc adm must-gather` has no flag for container resources. The supported
+workaround ([Red Hat solution 7128538](https://access.redhat.com/solutions/7128538))
+is a dedicated namespace with a LimitRange, its default service account granted
+`cluster-admin`, and `--run-namespace` pointed at it.
+`--limit-resources` does that end to end:
+
+```console
+$ must-gather-sos -o core,etcd --limit-resources --since 2h
+$ must-gather-sos -o core --limit-resources --cpu 1 --memory 4Gi
+$ must-gather-sos -o etcd --limit-resources --print-command
+```
+
+Defaults match the solution: 500m / 2Gi limits, 250m / 512Mi requests, namespace
+`must-gather-sos`. Pass `--run-namespace` to pick another name. After the run
+the cluster-admin binding is removed; the namespace is deleted unless you named
+an existing one that was already there.
+
+`--print-command` with `--limit-resources` prints create, gather, and cleanup
+as a paste-ready block:
+
+```console
+$ must-gather-sos -o etcd --limit-resources --print-command
+# create the limited run namespace
+oc create namespace must-gather-sos
+oc adm policy add-cluster-role-to-user cluster-admin system:serviceaccount:must-gather-sos:default
+oc apply -n must-gather-sos -f - <<'EOF'
+...
+EOF
+
+# gather
+oc adm must-gather --dest-dir=... --run-namespace=must-gather-sos -- "..."
+
+# clean up
+oc adm policy remove-cluster-role-from-user cluster-admin system:serviceaccount:must-gather-sos:default
+oc delete namespace must-gather-sos
+```
 
 ### Running fewer at once
 

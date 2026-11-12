@@ -13,6 +13,7 @@ from . import PROG, UserError, __version__
 from . import archive as archive_mod
 from . import catalog as catalog_mod
 from . import manifest as manifest_mod
+from . import namespace as namespace_mod
 from . import runner, script
 from .catalog import (SINCE_HELP, SINCE_LABEL, Catalog, build_selection,
                       split_list)
@@ -31,6 +32,8 @@ examples:
   %(prog)s -e audit_logs --since 2h         defaults plus audit logs, last 2h
   %(prog)s -o audit_logs -k audit_logs.force=on
   %(prog)s -o core,etcd --case-id 04123456 --archive
+  %(prog)s --limit-resources -o core,etcd   capped CPU/memory in its own namespace
+  %(prog)s --limit-resources --print-command
   %(prog)s --list-plugins
 """
 
@@ -118,12 +121,36 @@ def build_parser():
                              help="directory in the pod to copy from "
                                   "(oc default /must-gather/)")
 
+    resources = parser.add_argument_group("resource limits")
+    resources.add_argument(
+        "--limit-resources", action="store_true",
+        help="create a dedicated namespace with a LimitRange that caps "
+             "must-gather CPU and memory (defaults 500m / 2Gi, Red Hat "
+             f"solution 7128538), grant its default SA cluster-admin, pass "
+             f"it as --run-namespace (default "
+             f"{namespace_mod.DEFAULT_NAMESPACE}), and delete it after the "
+             "run. With --print-command, print the create and cleanup "
+             "commands too",
+    )
+    resources.add_argument(
+        "--cpu", metavar="QUANTITY", default=None,
+        help="with --limit-resources: container default CPU limit "
+             f"(default {namespace_mod.DEFAULT_CPU_LIMIT})",
+    )
+    resources.add_argument(
+        "--memory", metavar="QUANTITY", default=None,
+        help="with --limit-resources: container default memory limit "
+             f"(default {namespace_mod.DEFAULT_MEMORY_LIMIT})",
+    )
+
     behaviour = parser.add_argument_group("behaviour")
     behaviour.add_argument("--dry-run", action="store_true",
                            help="print the generated script and oc command, run nothing")
     behaviour.add_argument("--print-command", action="store_true",
                            help="print only the full oc command, shell-quoted "
-                                "and ready to paste, and exit")
+                                "and ready to paste, and exit. With "
+                                "--limit-resources, also print the commands "
+                                "to create and clean up the limited namespace")
     behaviour.add_argument("--print-script", action="store_true",
                            help="print only the generated in-pod script and exit")
     behaviour.add_argument("--no-filter", action="store_true",
@@ -162,6 +189,8 @@ def validate(args):
         )
     if args.volume_percentage is not None and not 1 <= args.volume_percentage <= 100:
         raise UserError("--volume-percentage must be between 1 and 100")
+    if (args.cpu or args.memory) and not args.limit_resources:
+        raise UserError("--cpu and --memory require --limit-resources")
     parse_jobs(getattr(args, "jobs", []))
 
     seen = set()
@@ -553,6 +582,16 @@ def list_catalogs(out=None):
     return 0
 
 
+def _resource_limits(args):
+    """Resolved CPU/memory quantities for ``--limit-resources``."""
+    return {
+        "cpu_limit": args.cpu or namespace_mod.DEFAULT_CPU_LIMIT,
+        "cpu_request": namespace_mod.DEFAULT_CPU_REQUEST,
+        "memory_limit": args.memory or namespace_mod.DEFAULT_MEMORY_LIMIT,
+        "memory_request": namespace_mod.DEFAULT_MEMORY_REQUEST,
+    }
+
+
 def _run(args):
     if args.list_catalogs:
         return list_catalogs()
@@ -581,6 +620,11 @@ def _run(args):
         return list_plugins(catalog, args.format == "json")
 
     reduce_logs = validate(args)
+    # Remember whether the user named the namespace themselves: when they did
+    # and it already existed, cleanup must not delete their project.
+    user_named_namespace = bool(args.run_namespace)
+    limited_ns = namespace_mod.apply_run_namespace(args)
+    limits = _resource_limits(args) if limited_ns else None
     targets = build_targets(args, reduce_logs)
 
     if not args.dest_dir:
@@ -596,12 +640,34 @@ def _run(args):
     if args.print_command:
         # Shell-quoted so it can be pasted and run verbatim.
         oc_argv = runner.build_oc_args(args, payload, oc=args.oc)
-        print(runner.quote_command(oc_argv))
+        gather = runner.quote_command(oc_argv)
+        if limited_ns:
+            print(namespace_mod.format_print_commands(
+                namespace_mod.create_commands(limited_ns, oc=args.oc, **limits),
+                gather,
+                namespace_mod.cleanup_commands(limited_ns, oc=args.oc),
+            ), end="")
+        else:
+            print(gather)
         return 0
 
     if args.dry_run:
         oc_argv = runner.build_oc_args(args, payload, oc=args.oc)
         summarise(targets, args, out=sys.stdout)
+        if limited_ns:
+            print("\n--- limited namespace ---")
+            print(f"  name: {limited_ns}")
+            print(f"  cpu limit: {limits['cpu_limit']} "
+                  f"(request {limits['cpu_request']})")
+            print(f"  memory limit: {limits['memory_limit']} "
+                  f"(request {limits['memory_request']})")
+            print("\n--- create namespace ---")
+            for cmd in namespace_mod.create_commands(
+                    limited_ns, oc=args.oc, **limits):
+                print(cmd)
+            print("\n--- clean up namespace ---")
+            for cmd in namespace_mod.cleanup_commands(limited_ns, oc=args.oc):
+                print(cmd)
         print("\n--- in-pod script ---")
         print(text, end="")
         print("\n--- oc command ---")
@@ -616,14 +682,35 @@ def _run(args):
 
     if not args.quiet:
         summarise(targets, args)
+        if limited_ns:
+            print(f"  limited namespace: {limited_ns} "
+                  f"(cpu {limits['cpu_limit']}, memory {limits['memory_limit']})",
+                  file=sys.stderr)
     if not args.batch and not confirm():
         return 130
 
     started = manifest_mod.utcnow()
     os.makedirs(args.dest_dir, exist_ok=True)
     raw_log = os.path.join(args.dest_dir, "oc-output.log")
-    exit_code = runner.execute(oc_argv, filter_noise=not args.no_filter,
-                               raw_log_path=raw_log)
+    created_ns = False
+    try:
+        if limited_ns:
+            if not args.quiet:
+                print(f"setting up limited namespace {limited_ns}...",
+                      file=sys.stderr)
+            created_ns = namespace_mod.setup(oc, limited_ns, **limits)
+        exit_code = runner.execute(oc_argv, filter_noise=not args.no_filter,
+                                   raw_log_path=raw_log)
+    finally:
+        if limited_ns:
+            # Always drop the cluster-admin binding. Delete the namespace when
+            # we created it, or when we picked the default name ourselves --
+            # never delete a pre-existing namespace the user named.
+            delete_ns = created_ns or not user_named_namespace
+            if not args.quiet:
+                print(f"cleaning up limited namespace {limited_ns}...",
+                      file=sys.stderr)
+            namespace_mod.cleanup(oc, limited_ns, delete_namespace=delete_ns)
     finished = manifest_mod.utcnow()
 
     # oc gives each image its own directory, named after the resolved
