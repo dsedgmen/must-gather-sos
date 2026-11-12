@@ -169,6 +169,14 @@ exit. Needs no cluster.
 .B \-\-print\-script
 Print only the generated in\-pod script, then exit. Needs no cluster.
 .TP
+.B \-\-plain\-progress
+Use the original must\-gather progress instead of the sos\-style plan,
+\fI[n/total]\fR lines, per\-task logs and summary. Plugin stdout stays on the
+shared stream, as with plain
+.BR "oc adm must-gather" .
+.B \-\-jobs
+has no effect in this mode.
+.TP
 .B \-\-batch
 Do not prompt for confirmation.
 .TP

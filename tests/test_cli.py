@@ -409,6 +409,24 @@ class TestPrintModes(unittest.TestCase):
         self.assertIn("/usr/bin/gather_etcd", out)
         self.assertNotIn("oc adm must-gather", out)
 
+    def test_plain_progress_print_script_skips_sos_library(self):
+        code, out, err = run_cli(
+            "-o", "etcd", "--plain-progress", "--print-script",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertIn("mgs_bg() {", out)
+        self.assertNotIn("task_plan() {", out)
+        self.assertIn("mgs_bg etcd ", out)
+
+    def test_plain_progress_warns_that_jobs_is_ignored(self):
+        _, out, _ = run_cli(
+            "-o", "etcd", "--plain-progress", "--jobs", "4", "--dry-run",
+        )
+        self.assertIn("progress: plain", out)
+        self.assertIn("--jobs has no effect with --plain-progress", out)
+        self.assertNotIn("jobs: 4", out)
+
     def test_print_modes_need_no_cluster(self):
         with mock.patch("must_gather_sos.runner.check_cluster") as check:
             run_cli("-o", "core", "--print-command")
