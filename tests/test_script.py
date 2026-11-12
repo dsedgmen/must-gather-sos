@@ -57,11 +57,13 @@ class ScriptTestCase(unittest.TestCase):
     def setUpClass(cls):
         cls.catalog = Catalog.load()
 
-    def generate(self, reduce_logs=None, jobs=0, catalog=None, **kwargs):
+    def generate(self, reduce_logs=None, jobs=0, catalog=None,
+                 progress=script.PROGRESS_SOS, **kwargs):
         catalog = catalog or self.catalog
         selection = build_selection(catalog, **kwargs)
         return script.generate(catalog, selection,
-                               reduce_logs=reduce_logs, jobs=jobs)
+                               reduce_logs=reduce_logs, jobs=jobs,
+                               progress=progress)
 
     def for_case(self, cat, kwargs, reduce_logs, jobs):
         return self.generate(catalog=Catalog.load(cat), reduce_logs=reduce_logs,
@@ -318,6 +320,41 @@ class TestProgress(ScriptTestCase):
                 summary = self.line_of(text, "task_summary || true")
                 self.assertLess(summary, self.line_of(text, "sync"))
                 self.assertGreater(summary, self.last_line_of(text, "task_run "))
+
+    def test_inlined_library_omits_source_comments(self):
+        text = self.generate(only="etcd")
+        self.assertNotIn("Ported from better-gather", text)
+        self.assertNotIn("DIVERGENCE from better-gather", text)
+        self.assertIn("task_plan() {", text)
+
+    def test_plain_progress_skips_the_sos_library(self):
+        text = self.generate(only="core,etcd", progress=script.PROGRESS_PLAIN)
+        self.assertNotIn("task_plan() {", text)
+        self.assertNotIn("task_summary() {", text)
+        self.assertNotIn("task_run ", text)
+        self.assertIn("mgs_bg() {", text)
+        self.assertIn("mgs_bg core:named core_named", text)
+        self.assertIn("mgs_bg etcd ", text)
+        self.assertIn("\nmgs_wait\n", text)
+        self.assertNotIn("task_summary || true", text)
+        self.assertNotIn("TASK_JOBS=", text)
+        self.assertNotIn("TASK_HEARTBEAT=", text)
+
+    def test_plain_progress_still_records_a_plugin_log(self):
+        text = self.generate(only="etcd", progress=script.PROGRESS_PLAIN)
+        self.assertIn("must-gather-sos-plugins.log", text)
+        self.assertIn("mgs_rebase /must-gather", text)
+
+    def test_plain_progress_keeps_post_phase_serial(self):
+        text = self.generate(only="etcd,aro", progress=script.PROGRESS_PLAIN)
+        # Exact line match: mgs_wait() { in the library would also startswith.
+        waits = [i for i, ln in enumerate(text.splitlines()) if ln == "mgs_wait"]
+        etcd = self.line_of(text, "mgs_bg etcd ")
+        aro = self.line_of(text, "mgs_bg aro ")
+        self.assertEqual(len(waits), 2)  # after parallel, then after aro
+        self.assertLess(etcd, waits[0])
+        self.assertLess(waits[0], aro)
+        self.assertLess(aro, waits[1])
 
 
 if __name__ == "__main__":

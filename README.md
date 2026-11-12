@@ -466,10 +466,12 @@ lines in no particular order, with no way to tell how far along the run is,
 which scripts have finished, or which did anything at all. Support cases
 routinely arrive with a log nobody has read.
 
-The run is given the shape `sos report` has had for years. The plan is
-announced before anything starts, each task reports `[n/total]` as it
-finishes, and a summary at the end says what collected something, what
-collected nothing, and what failed:
+By default the run is given the shape `sos report` has had for years. The
+plan is announced before anything starts, each task reports `[n/total]` as
+it finishes, and a summary at the end says what collected something, what
+collected nothing, and what failed. Pass `--plain-progress` to keep the
+original must-gather behaviour instead: plugin stdout stays on the shared
+stream, with no sos-style plan or summary (`--jobs` has no effect then).
 
 ```console
 $ must-gather-sos -o core,etcd,sriov,monitoring --since 30m
@@ -585,10 +587,10 @@ rather than as a pause after the summary.
 
 The progress library is
 [`must_gather_sos/data/task_common.sh`](must_gather_sos/data/task_common.sh).
-It is inlined into the generated script because the image has no copy of it,
-and is kept function-for-function in step with better-gather's
-`collection-scripts/task_common.sh` so the two can be resynced; the
-deliberate differences are marked `DIVERGENCE` in the file.
+It is inlined into the generated script (comments stripped) because the
+image has no copy of it, and is kept function-for-function in step with
+better-gather's `collection-scripts/task_common.sh` so the two can be
+resynced; the deliberate differences are marked `DIVERGENCE` in the file.
 
 ## oc's own noise
 

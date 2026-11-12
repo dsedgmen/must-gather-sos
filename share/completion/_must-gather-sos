@@ -49,6 +49,7 @@ _arguments -s -S \
 	'--dry-run[print the generated script and oc command, run nothing]' \
 	'--print-command[print only the full oc command, paste-ready]' \
 	'--print-script[print only the generated in-pod script]' \
+	'--plain-progress[use original must-gather progress instead of sos-style]' \
 	'--batch[do not prompt for confirmation]' \
 	'(-q --quiet)'{-q,--quiet}'[quieter output]' \
 	'(-v --verbose)'{-v,--verbose}'[more output]' \

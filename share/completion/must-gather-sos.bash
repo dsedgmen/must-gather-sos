@@ -85,7 +85,7 @@ _must_gather_sos() {
 		--dest-dir --case-id --archive --no-manifest
 		--image --image-stream --timeout --node-name --node-selector
 		--run-namespace --host-network --volume-percentage --source-dir
-		--dry-run --print-command --print-script
+		--dry-run --print-command --print-script --plain-progress
 		--batch -q --quiet -v --verbose --catalog --oc
 	" -- "$cur")
 }

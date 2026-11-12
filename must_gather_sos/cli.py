@@ -33,6 +33,7 @@ examples:
   %(prog)s -e audit_logs --since 2h         defaults plus audit logs, last 2h
   %(prog)s -o audit_logs -k audit_logs.force=on
   %(prog)s -o core,etcd --case-id 04123456 --archive
+  %(prog)s --plain-progress -o core,etcd
   %(prog)s --limit-resources -o core,etcd   capped CPU/memory in its own namespace
   %(prog)s --limit-resources --print-command
   %(prog)s --list-plugins
@@ -184,6 +185,12 @@ def build_parser():
                                 "are hidden, since neither says anything about "
                                 "the collection; the unfiltered stream is kept "
                                 "in the output directory either way")
+    behaviour.add_argument(
+        "--plain-progress", action="store_true",
+        help="use original must-gather progress: plugin stdout stays on the "
+             "shared stream, with no sos-style [n/total] plan or summary. "
+             "--jobs has no effect in this mode",
+    )
     behaviour.add_argument("--batch", action="store_true",
                            help="do not prompt for confirmation")
     behaviour.add_argument("-q", "--quiet", action="store_true")
@@ -514,8 +521,11 @@ def _summarise_target(target, args, out, indent="  "):
     for plugin, options in sorted(selection.options.items()):
         rendered = ", ".join(f"{k}={v}" for k, v in sorted(options.items()))
         print(f"{indent}options: {plugin}: {rendered}", file=out)
-    if target.jobs:
+    if target.jobs and not getattr(args, "plain_progress", False):
         print(f"{indent}jobs: {target.jobs} collection script(s) at a time",
+              file=out)
+    if getattr(args, "plain_progress", False):
+        print(f"{indent}progress: plain (plugin stdout on the shared stream)",
               file=out)
     for warning in target_warnings(target, args):
         print(f"{indent}warning: {warning}", file=out)
@@ -531,6 +541,12 @@ def target_warnings(target, args):
             f"--reduce-logs has no effect on the {catalog.name} image: it has "
             "no common.sh to read REDUCE_LOGS, so nothing is skipped or "
             "compressed."
+        )
+
+    if getattr(args, "plain_progress", False) and target.jobs:
+        warnings.append(
+            "--jobs has no effect with --plain-progress; "
+            "plain-progress runs launch every plugin at once."
         )
 
     if not (args.since or args.since_time):
@@ -672,7 +688,10 @@ def _run(args):
     if not args.dest_dir:
         args.dest_dir = runner.default_dest_dir()
 
-    text = script.generate_targets(targets)
+    progress = (script.PROGRESS_PLAIN
+                if getattr(args, "plain_progress", False)
+                else script.PROGRESS_SOS)
+    text = script.generate_targets(targets, progress=progress)
     payload = runner.encode_payload(text)
 
     if args.print_script:
