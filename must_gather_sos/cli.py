@@ -34,6 +34,8 @@ examples:
   %(prog)s -o audit_logs -k audit_logs.force=on
   %(prog)s -o core,etcd --case-id 04123456 --archive
   %(prog)s --plain-progress -o core,etcd
+  %(prog)s --skip-namespaces assisted-installer
+  %(prog)s --enable-namespaces openshift-monitoring
   %(prog)s --limit-resources -o core,etcd   capped CPU/memory in its own namespace
   %(prog)s --limit-resources --print-command
   %(prog)s --list-plugins
@@ -118,6 +120,16 @@ def build_parser():
                                  "it when a cluster cannot take two dozen "
                                  "inspects at the same time. Prefix with an "
                                  "image to cap just that one")
+    collection.add_argument(
+        "--skip-namespaces", metavar="LIST", default="",
+        help="omit these namespaces from the core named inspect "
+             "(comma separated; bare names or ns/NAME)",
+    )
+    collection.add_argument(
+        "--enable-namespaces", metavar="LIST", default="",
+        help="also inspect these namespaces in the core named pass "
+             "(comma separated; bare names or ns/NAME)",
+    )
 
     output = parser.add_argument_group("output")
     output.add_argument("--dest-dir", metavar="DIR",
@@ -399,7 +411,15 @@ def _target(catalog, image, args, reduce_logs, default_jobs, image_jobs,
         known_elsewhere=known_elsewhere,
     )
     jobs = image_jobs.get(image, default_jobs)
-    return script.Target(catalog, selection, reduce_logs, jobs, image)
+    return script.Target(
+        catalog,
+        selection,
+        reduce_logs,
+        jobs,
+        image,
+        split_list(getattr(args, "skip_namespaces", "")),
+        split_list(getattr(args, "enable_namespaces", "")),
+    )
 
 
 def _terminal_width():

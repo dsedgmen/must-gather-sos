@@ -123,6 +123,27 @@ Booleans take `on`/`off` and may be given bare (`-k audit_logs.force`).
 Repeatable options like `metrics.match` take their value **verbatim**, so a
 Prometheus selector containing commas and spaces stays one selector.
 
+## Core namespaces
+
+The `core` plugin's named inspect covers a fixed list of namespaces from the
+catalog (`ns/openshift`, `ns/kube-system`, …). Adjust that list for one run
+without changing plugins:
+
+| Flag | Meaning |
+| ---- | ------- |
+| `--skip-namespaces` | omit these from the default named list |
+| `--enable-namespaces` | also inspect these namespaces |
+
+```console
+$ must-gather-sos --skip-namespaces assisted-installer
+$ must-gather-sos --enable-namespaces openshift-monitoring,my-app
+$ must-gather-sos --enable-namespaces ns/foo --skip-namespaces kube-system
+```
+
+Bare names become `ns/<name>`. Resolution is `(defaults ∪ enable) − skip`
+(skip wins). These flags only change `core:named`; they do not affect
+`core:all-namespaces` or what other plugins collect inside their own scripts.
+
 ## `--since`
 
 `--since` and `--since-time` are passed through to `oc`, which sets

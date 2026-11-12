@@ -33,6 +33,8 @@ _arguments -s -S \
 	'--since-time[only logs after an RFC3339 time]:time:' \
 	'--reduce-logs[log reduction options]:options:_values -s , opt skip_rotated_logs compress_service_logs compress_logs' \
 	'*--jobs[most collection scripts to run at once in the pod (0 = unlimited)]:count:' \
+	'--skip-namespaces[omit these namespaces from the core named inspect]:namespaces:' \
+	'--enable-namespaces[also inspect these namespaces in the core named pass]:namespaces:' \
 	'--dest-dir[write gathered data here]:directory:_files -/' \
 	'--case-id[support case number]:case id:' \
 	'--archive[tar up the result]::format:(xz gz none)' \

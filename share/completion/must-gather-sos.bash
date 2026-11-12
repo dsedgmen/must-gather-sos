@@ -82,6 +82,7 @@ _must_gather_sos() {
 		-o --only-plugins -n --skip-plugins -e --enable-plugins
 		-a --all-plugins -k --plugin-option
 		--since --since-time --reduce-logs --jobs
+		--skip-namespaces --enable-namespaces
 		--dest-dir --case-id --archive --no-manifest
 		--image --image-stream --timeout --node-name --node-selector
 		--run-namespace --host-network --volume-percentage --source-dir

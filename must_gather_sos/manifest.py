@@ -153,6 +153,8 @@ def build(target, args, started, finished, exit_code, output_dir, oc):
             "since": args.since,
             "since_time": args.since_time,
             "reduce_logs": args.reduce_logs,
+            "skip_namespaces": getattr(args, "skip_namespaces", "") or "",
+            "enable_namespaces": getattr(args, "enable_namespaces", "") or "",
             # This image, not every --image in the run: a per-image manifest
             # claiming the whole list would simply be wrong. The full argv
             # is under invocation.argv.
