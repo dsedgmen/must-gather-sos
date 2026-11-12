@@ -51,6 +51,13 @@ _arguments -s -S \
 	'--dry-run[print the generated script and oc command, run nothing]' \
 	'--print-command[print only the full oc command, paste-ready]' \
 	'--print-script[print only the generated in-pod script]' \
+	'--print-mustgather[print a MustGather CR for the must-gather-operator]' \
+	'--mustgather-name[metadata.name for --print-mustgather]:name:' \
+	'--mustgather-namespace[metadata.namespace for --print-mustgather]:namespace:' \
+	'--service-account[serviceAccountName for --print-mustgather]:name:' \
+	'--case-secret[SFTP Secret name for --print-mustgather]:name:' \
+	'--internal-user[mark SFTP account as Red Hat internal for --print-mustgather]' \
+	'--obfuscate[enable obfuscation on the MustGather CR (needs --case-id)]' \
 	'--plain-progress[use original must-gather progress instead of sos-style]' \
 	'--batch[do not prompt for confirmation]' \
 	'(-q --quiet)'{-q,--quiet}'[quieter output]' \

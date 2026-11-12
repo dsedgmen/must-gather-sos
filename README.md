@@ -245,6 +245,7 @@ none of which need a cluster:
 $ must-gather-sos -o core,etcd --since 2h --dry-run        # summary + script + command
 $ must-gather-sos -o core,etcd --since 2h --print-command  # just the command, paste-ready
 $ must-gather-sos -o core,etcd --since 2h --print-script   # just the in-pod script
+$ must-gather-sos -o core,etcd --since 2h --case-id 04123456 --print-mustgather
 ```
 
 `--print-command` emits a single line you can copy, tweak and run yourself:
@@ -537,6 +538,28 @@ Four things follow from that:
   and suggests pinning the matching tag or `-n`.
 - **A slow task does not look like a hang.** Every 30 seconds
   (`TASK_HEARTBEAT`) the run says what is still going and for how long.
+
+### MustGather operator
+
+[openshift/must-gather-operator](https://github.com/openshift/must-gather-operator)
+runs must-gather as an in-cluster Job, with optional SFTP upload to a support
+case and obfuscation. `--print-mustgather` turns the same plugin selection into
+a `MustGather` CR (`operator.openshift.io/v1`) instead of invoking `oc`:
+
+```console
+$ must-gather-sos -o core,etcd --since 2h --case-id 04123456 --print-mustgather
+$ must-gather-sos -o core,etcd --since 2h --case-id 04123456 \
+    --internal-user --obfuscate --print-mustgather | oc apply -f -
+```
+
+`--since` / `--since-time` / `--timeout` / `--case-id` map onto the CR.
+`--image-stream NAME:TAG` becomes `spec.imageStreamRef` (ImageStream in the
+operator namespace). The generated gather script is embedded as base64 chunks
+in `gatherSpec.args` under the CRD's 256-character item limit; a short
+bootstrap in `gatherSpec.command` reassembles and runs it.
+
+The flag only prints the CR — it does not install the operator or create the
+ServiceAccount / case-management Secret the examples expect.
 
 ### Limiting CPU and memory
 

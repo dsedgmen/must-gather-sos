@@ -14,6 +14,7 @@ from . import archive as archive_mod
 from . import catalog as catalog_mod
 from . import cluster_catalog as cluster_catalog_mod
 from . import manifest as manifest_mod
+from . import mustgather_cr as mustgather_cr_mod
 from . import namespace as namespace_mod
 from . import runner, script
 from .catalog import (SINCE_HELP, SINCE_LABEL, Catalog, build_selection,
@@ -38,6 +39,7 @@ examples:
   %(prog)s --enable-namespaces openshift-monitoring
   %(prog)s --limit-resources -o core,etcd   capped CPU/memory in its own namespace
   %(prog)s --limit-resources --print-command
+  %(prog)s -o core,etcd --since 2h --case-id 04123456 --print-mustgather
   %(prog)s --list-plugins
   %(prog)s --generate-cluster-catalog
   %(prog)s --generate-cluster-catalog ./cats --experimental-inspect-catalogs
@@ -190,6 +192,47 @@ def build_parser():
                                 "to create and clean up the limited namespace")
     behaviour.add_argument("--print-script", action="store_true",
                            help="print only the generated in-pod script and exit")
+    behaviour.add_argument(
+        "--print-mustgather", action="store_true",
+        help="print a MustGather CR (operator.openshift.io/v1) for "
+             "openshift/must-gather-operator that runs the selected plugins, "
+             "and exit. Maps --since/--since-time/--timeout/--case-id; "
+             "embeds the generated script via gatherSpec.command/args. "
+             "Requires the operator and a must-gather-admin ServiceAccount "
+             "on the cluster; does not create the CR itself",
+    )
+    behaviour.add_argument(
+        "--mustgather-name", metavar="NAME",
+        default=mustgather_cr_mod.DEFAULT_NAME,
+        help="metadata.name for --print-mustgather "
+             f"(default {mustgather_cr_mod.DEFAULT_NAME})",
+    )
+    behaviour.add_argument(
+        "--mustgather-namespace", metavar="NAMESPACE", default=None,
+        help="metadata.namespace for --print-mustgather (omit to leave unset)",
+    )
+    behaviour.add_argument(
+        "--service-account", metavar="NAME",
+        default=mustgather_cr_mod.DEFAULT_SERVICE_ACCOUNT,
+        help="spec.serviceAccountName for --print-mustgather "
+             f"(default {mustgather_cr_mod.DEFAULT_SERVICE_ACCOUNT})",
+    )
+    behaviour.add_argument(
+        "--case-secret", metavar="NAME",
+        default=mustgather_cr_mod.DEFAULT_CASE_SECRET,
+        help="SFTP credential Secret name for --print-mustgather when "
+             f"--case-id is set (default {mustgather_cr_mod.DEFAULT_CASE_SECRET})",
+    )
+    behaviour.add_argument(
+        "--internal-user", action="store_true",
+        help="with --print-mustgather and --case-id: mark the SFTP account "
+             "as a Red Hat internal user",
+    )
+    behaviour.add_argument(
+        "--obfuscate", action="store_true",
+        help="with --print-mustgather: enable must-gather-clean obfuscation "
+             "before upload (requires --case-id)",
+    )
     behaviour.add_argument("--no-filter", action="store_true",
                            help="show oc's output in full. By default the "
                                 "disk-usage line it prints every five seconds "
@@ -239,6 +282,16 @@ def validate(args):
         raise UserError("--volume-percentage must be between 1 and 100")
     if (args.cpu or args.memory) and not args.limit_resources:
         raise UserError("--cpu and --memory require --limit-resources")
+    print_modes = sum(bool(getattr(args, name, False)) for name in (
+        "print_command", "print_script", "print_mustgather",
+    ))
+    if print_modes > 1:
+        raise UserError(
+            "--print-command, --print-script and --print-mustgather "
+            "are mutually exclusive"
+        )
+    if getattr(args, "print_mustgather", False):
+        _validate_mustgather(args)
     parse_jobs(getattr(args, "jobs", []))
 
     seen = set()
@@ -259,6 +312,51 @@ def validate(args):
                 f"{', '.join(REDUCE_LOGS_CHOICES)}"
             )
     return reduce_logs
+
+
+def _validate_mustgather(args):
+    """Flags that do not map cleanly onto a MustGather CR."""
+    if args.limit_resources:
+        raise UserError(
+            "--print-mustgather cannot be combined with --limit-resources; "
+            "the operator manages its own Job pod resources"
+        )
+    if args.dry_run:
+        raise UserError(
+            "--print-mustgather cannot be combined with --dry-run"
+        )
+    if args.archive is not None:
+        raise UserError(
+            "--print-mustgather cannot be combined with --archive; "
+            "use --case-id for operator SFTP upload"
+        )
+    if len(args.image) > 1:
+        raise UserError(
+            "--print-mustgather supports one gather image; the operator "
+            "runs a single MustGather Job per CR"
+        )
+    if args.image:
+        raise UserError(
+            "--print-mustgather does not accept --image; the operator uses "
+            "its DEFAULT_MUST_GATHER_IMAGE or --image-stream NAME:TAG "
+            "(an ImageStream in the operator namespace)"
+        )
+    if args.node_name or args.node_selector or args.host_network:
+        raise UserError(
+            "--print-mustgather does not map --node-name, --node-selector "
+            "or --host-network onto the MustGather CR"
+        )
+    if args.run_namespace:
+        raise UserError(
+            "--print-mustgather does not use --run-namespace; set "
+            "--mustgather-namespace for the CR's metadata.namespace"
+        )
+    if args.obfuscate and not args.case_id:
+        raise UserError("--obfuscate with --print-mustgather requires --case-id")
+    # Validate image-stream shape early so --print-mustgather fails before
+    # generating a large script.
+    if args.image_stream:
+        mustgather_cr_mod.parse_image_stream(args.image_stream)
 
 
 def _split_pin(value):
@@ -716,6 +814,24 @@ def _run(args):
 
     if args.print_script:
         print(text, end="")
+        return 0
+
+    if args.print_mustgather:
+        doc = mustgather_cr_mod.build(
+            text,
+            name=args.mustgather_name,
+            namespace=args.mustgather_namespace,
+            service_account=args.service_account,
+            case_id=args.case_id,
+            case_secret=args.case_secret,
+            internal_user=args.internal_user,
+            since=args.since,
+            since_time=args.since_time,
+            timeout=args.timeout,
+            image_stream=args.image_stream,
+            obfuscate=args.obfuscate,
+        )
+        print(mustgather_cr_mod.render_yaml(doc), end="")
         return 0
 
     if args.print_command:
